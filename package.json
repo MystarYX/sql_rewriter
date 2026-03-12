@@ -1,0 +1,9 @@
+﻿{
+  "name": "sql_rewriter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "基础版 SQL 字段分析工具",
+  "scripts": {
+    "test": "node --test ./tests/parser.test.js"
+  }
+}

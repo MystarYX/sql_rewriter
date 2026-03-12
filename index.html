@@ -1,0 +1,63 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>基础版 SQL 字段分析工具</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1>SQL 字段分析工具（V1）</h1>
+      <p>用于快速提取 SQL 字段映射关系，减少逐行阅读成本。</p>
+    </header>
+
+    <section class="panel">
+      <div class="tabs" role="tablist" aria-label="功能切换">
+        <button class="tab active" data-mode="legacy" role="tab" aria-selected="true">旧代码分析</button>
+        <button class="tab" data-mode="standard" role="tab" aria-selected="false">标准代码分析</button>
+      </div>
+
+      <div class="editor-wrap">
+        <label for="legacy-input" class="label">旧代码 SQL</label>
+        <textarea id="legacy-input" class="sql-input active" placeholder="示例：SELECT gicode AS COL_ID FROM goods;"></textarea>
+
+        <label for="standard-input" class="label hidden">标准代码 SQL</label>
+        <textarea id="standard-input" class="sql-input" placeholder="示例：SELECT gicode COL_ID FROM dim_goods;"></textarea>
+      </div>
+
+      <div class="btn-row">
+        <button id="parse-btn" class="btn primary">解析</button>
+        <button id="clear-btn" class="btn">清空</button>
+        <button id="copy-btn" class="btn">复制结果</button>
+      </div>
+
+      <p id="message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section class="panel result-panel">
+      <h2>解析结果</h2>
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>来源表</th>
+              <th>原始字段</th>
+              <th>映射字段</th>
+              <th>注释</th>
+            </tr>
+          </thead>
+          <tbody id="result-body">
+            <tr><td colspan="5" class="empty">暂无结果</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./parser.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
