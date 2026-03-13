@@ -171,25 +171,25 @@
     var resultNode = {};
 
     var tableX = 24;
-    var fieldX = 400;
-    var targetX = 740;
-    var resultX = 1090;
+    var fieldX = 470;
+    var targetX = 850;
+    var resultX = 1220;
 
-    var tableW = 340;
-    var fieldW = 270;
-    var targetW = 230;
-    var resultW = 220;
+    var tableW = 300;
+    var fieldW = 220;
+    var targetW = 190;
+    var resultW = 180;
 
-    var tableH = 78;
-    var fieldH = 66;
-    var targetH = 66;
-    var resultH = 68;
+    var tableH = 68;
+    var fieldH = 54;
+    var targetH = 54;
+    var resultH = 56;
 
-    var rowGap = 104;
+    var rowGap = 124;
     var topY = 24;
     var totalRows = Math.max(fieldOrder.length, targetOrder.length, tableOrder.length, 1);
     var canvasH = topY * 2 + totalRows * rowGap + 80;
-    var canvasW = 1360;
+    var canvasW = 1500;
 
     var html = [];
     html.push('<div class="graph-toolbar">');

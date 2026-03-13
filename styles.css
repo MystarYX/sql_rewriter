@@ -196,8 +196,8 @@ th {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 8px 10px;
-  font-size: 28px;
+  padding: 6px 8px;
+  font-size: 20px;
   line-height: 1.1;
   color: #363944;
   border: 2px solid #9a7bff;
@@ -210,24 +210,24 @@ th {
   background: #d5d6ea;
   align-items: stretch;
   justify-content: space-between;
-  padding: 6px 8px;
-  font-size: 20px;
+  padding: 4px 6px;
+  font-size: 16px;
 }
 
 .graph-node.field {
   background: #d9d9ec;
-  font-size: 24px;
+  font-size: 18px;
 }
 
 .graph-node.target {
   background: #d5d5ea;
-  font-size: 24px;
+  font-size: 18px;
 }
 
 .graph-node.result {
   background: #d7f1df;
   border-color: #7ac997;
-  font-size: 24px;
+  font-size: 18px;
 }
 
 .table-title {
@@ -243,8 +243,8 @@ th {
   border: 1px solid #8f9bb5;
   background: #f6f8ff;
   border-radius: 4px;
-  font-size: 12px;
-  padding: 2px 8px;
+  font-size: 11px;
+  padding: 2px 6px;
   cursor: pointer;
   align-self: center;
 }

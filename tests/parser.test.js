@@ -375,3 +375,15 @@ FROM gf_core.test_table m`;
   assert.deepEqual(targets, ["col_a", "col_b", "col_c"]);
   assert.equal(result.rows.some((r) => String(r.sourceField).length > 120), false);
 });
+
+test("insert overwrite with leading whitespace should still parse target table", () => {
+  const sql = `
+
+  INSERT OVERWRITE TABLE ads_leading_ws_target PARTITION (pt='\${bizdate}')
+  SELECT m.col_a
+  FROM gf_core.test_table m`;
+
+  const result = analyzeSqlLineage(sql, {});
+  assert.equal(result.rows.length > 0, true);
+  assert.equal(result.rows.every((r) => r.targetTable === "ads_leading_ws_target"), true);
+});

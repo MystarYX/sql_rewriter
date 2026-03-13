@@ -854,17 +854,17 @@
   function parseStatementTarget(sql, index) {
     var s = normalizeSql(sql);
     var clean = stripSqlComments(s);
-    var create = s.match(/^create\s+table\s+([a-zA-Z_][\w$.]*)\s+as\s+([\s\S]+)$/i);
+    var create = s.match(/^\s*create\s+table\s+([a-zA-Z_][\w$.]*)\s+as\s+([\s\S]+)$/i);
     if (create) {
       return { targetTable: create[1], query: create[2] };
     }
 
-    var insert = s.match(/^insert\s+into\s+([a-zA-Z_][\w$.]*)\s+([\s\S]+)$/i);
+    var insert = s.match(/^\s*insert\s+into\s+([a-zA-Z_][\w$.]*)\s+([\s\S]+)$/i);
     if (insert) {
       return { targetTable: insert[1], query: insert[2] };
     }
 
-    var overwrite = clean.match(/^insert\s+overwrite\s+table\s+([a-zA-Z_][\w$.]*)\b/i);
+    var overwrite = clean.match(/^\s*insert\s+overwrite\s+table\s+([a-zA-Z_][\w$.]*)\b/i);
     if (overwrite) {
       var selectIdx = findTopLevelKeyword(clean, "select", 0);
       if (selectIdx >= 0) {
