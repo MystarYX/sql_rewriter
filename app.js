@@ -135,6 +135,56 @@
     return [header.join("\t")].concat(content).join("\n");
   }
 
+  function runAnalysis(sql, dictText) {
+    if (!window.SQLParser) {
+      throw new Error("解析器未加载，请刷新页面后重试");
+    }
+
+    if (typeof window.SQLParser.analyzeSqlLineage === "function") {
+      return window.SQLParser.analyzeSqlLineage(sql, {
+        standardDictText: dictText || "",
+        location: activeMode + "_input.sql",
+      });
+    }
+
+    if (typeof window.SQLParser.parseSqlFields === "function") {
+      // Backward-compatible fallback for old parser.js bundles.
+      var basic = window.SQLParser.parseSqlFields(sql);
+      var basicRows = (basic.rows || []).map(function (row, idx) {
+        return {
+          index: idx + 1,
+          sourceTable: row.sourceTable || "未识别",
+          sourceField: row.sourceField || "未识别",
+          mappedField: row.mappedField || "未识别",
+          comment: row.comment || "",
+          targetTable: "RESULT_1",
+        };
+      });
+
+      return {
+        rows: basicRows,
+        lineageEdges: basicRows.map(function (row) {
+          return {
+            sourceTable: row.sourceTable,
+            sourceField: row.sourceField,
+            targetTable: row.targetTable,
+            targetField: row.mappedField,
+          };
+        }),
+        rewrittenSql: "",
+        renameReport: [],
+        astSummary: {
+          statementCount: 1,
+          edgeCount: basicRows.length,
+          fieldCount: basicRows.length,
+        },
+        warnings: ["当前使用旧版解析器，已降级为基础字段解析模式"],
+      };
+    }
+
+    throw new Error("解析器版本不兼容，请重新部署最新代码");
+  }
+
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function () {
       switchMode(tab.getAttribute("data-mode"));
@@ -150,10 +200,7 @@
         return;
       }
 
-      var result = window.SQLParser.analyzeSqlLineage(sql, {
-        standardDictText: dictInput.value || "",
-        location: activeMode + "_input.sql",
-      });
+      var result = runAnalysis(sql, dictInput.value || "");
 
       renderFieldRows(result.rows);
       renderLineage(result.lineageEdges);
