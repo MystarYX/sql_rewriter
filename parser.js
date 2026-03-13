@@ -159,6 +159,79 @@
     return splitTopLevelByChar(selectPart, ",");
   }
 
+  function stripSqlComments(sql) {
+    var out = "";
+    var i = 0;
+    var inSingle = false;
+    var inDouble = false;
+    var inBacktick = false;
+    var inBracket = false;
+
+    while (i < sql.length) {
+      var ch = sql[i];
+      var next = i + 1 < sql.length ? sql[i + 1] : "";
+      var prev = i > 0 ? sql[i - 1] : "";
+
+      if (!inDouble && !inBacktick && !inBracket && ch === "'" && prev !== "\\") {
+        inSingle = !inSingle;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (!inSingle && !inBacktick && !inBracket && ch === '"' && prev !== "\\") {
+        inDouble = !inDouble;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (!inSingle && !inDouble && !inBracket && ch === "`") {
+        inBacktick = !inBacktick;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (!inSingle && !inDouble && !inBacktick && ch === "[") {
+        inBracket = true;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (inBracket && ch === "]") {
+        inBracket = false;
+        out += ch;
+        i += 1;
+        continue;
+      }
+
+      if (!inSingle && !inDouble && !inBacktick && !inBracket) {
+        if (ch === "-" && next === "-") {
+          i += 2;
+          while (i < sql.length && sql[i] !== "\n") {
+            i += 1;
+          }
+          out += " ";
+          continue;
+        }
+        if (ch === "/" && next === "*") {
+          i += 2;
+          while (i + 1 < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) {
+            if (sql[i] === "\n") {
+              out += "\n";
+            }
+            i += 1;
+          }
+          i += 2;
+          out += " ";
+          continue;
+        }
+      }
+
+      out += ch;
+      i += 1;
+    }
+    return out;
+  }
+
   function stripTrailingComment(item) {
     var lineIdx = item.search(/\s--\s*/);
     if (lineIdx >= 0) {
@@ -474,7 +547,7 @@
   }
 
   function getSelectFromParts(sql) {
-    var s = stripOuterParens(stripTailSemicolon(normalizeSql(sql)));
+    var s = stripSqlComments(stripOuterParens(stripTailSemicolon(normalizeSql(sql))));
     var selectIdx = findTopLevelKeyword(s, "select", 0);
     if (selectIdx < 0) {
       throw new Error("Only SELECT statements are supported");
@@ -780,6 +853,7 @@
 
   function parseStatementTarget(sql, index) {
     var s = normalizeSql(sql);
+    var clean = stripSqlComments(s);
     var create = s.match(/^create\s+table\s+([a-zA-Z_][\w$.]*)\s+as\s+([\s\S]+)$/i);
     if (create) {
       return { targetTable: create[1], query: create[2] };
@@ -788,6 +862,21 @@
     var insert = s.match(/^insert\s+into\s+([a-zA-Z_][\w$.]*)\s+([\s\S]+)$/i);
     if (insert) {
       return { targetTable: insert[1], query: insert[2] };
+    }
+
+    var overwrite = clean.match(/^insert\s+overwrite\s+table\s+([a-zA-Z_][\w$.]*)\b/i);
+    if (overwrite) {
+      var selectIdx = findTopLevelKeyword(clean, "select", 0);
+      if (selectIdx >= 0) {
+        return {
+          targetTable: overwrite[1],
+          query: s.slice(selectIdx),
+        };
+      }
+      return {
+        targetTable: overwrite[1],
+        query: s,
+      };
     }
 
     return { targetTable: "RESULT_" + (index + 1), query: s };
@@ -925,6 +1014,36 @@
     return lines.join("\n");
   }
 
+  function validateConsistency(rows, edges, treeRows) {
+    var rowKeys = {};
+    rows.forEach(function (r) {
+      rowKeys[[r.sourceTable, r.sourceField, r.targetTable, r.mappedField].join("|")] = true;
+    });
+
+    var edgeKeys = {};
+    edges.forEach(function (e) {
+      edgeKeys[[e.sourceTable, e.sourceField, e.targetTable, e.targetField].join("|")] = true;
+    });
+
+    var treeKeys = {};
+    treeRows.forEach(function (group) {
+      group.sources.forEach(function (s) {
+        treeKeys[[s.table, s.field, group.targetTable, group.targetField].join("|")] = true;
+      });
+    });
+
+    var missingInEdges = Object.keys(rowKeys).filter(function (k) { return !edgeKeys[k]; });
+    var missingInTree = Object.keys(edgeKeys).filter(function (k) { return !treeKeys[k]; });
+    var missingInRows = Object.keys(edgeKeys).filter(function (k) { return !rowKeys[k]; });
+
+    return {
+      pass: missingInEdges.length === 0 && missingInTree.length === 0 && missingInRows.length === 0,
+      missingInEdges: missingInEdges,
+      missingInTree: missingInTree,
+      missingInRows: missingInRows,
+    };
+  }
+
   function parseSourceTable(sql) {
     var parts = getSelectFromParts(sql);
     var sources = splitFromSources(parts.fromPart);
@@ -988,10 +1107,13 @@
       };
     });
 
+    var treeRows = buildTreeRows(allEdges);
+    var consistency = validateConsistency(rows, allEdges, treeRows);
+
     return {
       rows: rows,
       lineageEdges: allEdges,
-      lineageTree: buildTreeRows(allEdges),
+      lineageTree: treeRows,
       mermaid: buildMermaid(allEdges),
       rewrittenSql: "",
       renameReport: [],
@@ -1000,6 +1122,7 @@
         edgeCount: allEdges.length,
         fieldCount: rows.length,
       },
+      consistencyCheck: consistency,
       warnings: allEdges.some(function (e) { return e.sourceTable === "UNRESOLVED"; }) ? ["Contains unresolved lineage refs"] : [],
       debugInfo: debug,
     };

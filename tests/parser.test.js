@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const { analyzeSqlLineage, parseSqlFields, splitSelectItems } = require("../parser");
 
 test("basic AS alias lineage", () => {
@@ -255,6 +256,7 @@ test("lineage tree and mermaid output exist", () => {
   assert.equal(result.lineageTree.length >= 2, true);
   assert.equal(/^graph LR/.test(result.mermaid), true);
   assert.equal(result.mermaid.includes("-->"), true);
+  assert.equal(result.consistencyCheck.pass, true);
 });
 
 test("tight alias max(col)alias should not create self-mapping", () => {
@@ -294,4 +296,82 @@ test("tight alias cast(sum(col)...)alias should not create self-mapping", () => 
   );
   assert.equal(hasReal, true);
   assert.equal(hasSelf, false);
+});
+
+test("ui style snapshot has horizontal-tree structure classes", () => {
+  const html = fs.readFileSync("./index.html", "utf8");
+  const js = fs.readFileSync("./app.js", "utf8");
+  const css = fs.readFileSync("./styles.css", "utf8");
+  assert.equal(html.includes('id="tree-view"'), true);
+  assert.equal(html.includes('id="mermaid-text"'), true);
+  assert.equal(js.includes("table-toggle"), true);
+  assert.equal(js.includes("collapse-all"), true);
+  assert.equal(js.includes("expand-all"), true);
+  assert.equal(css.includes(".graph-canvas"), true);
+  assert.equal(css.includes(".graph-toolbar"), true);
+  assert.equal(css.includes(".table-toggle"), true);
+  assert.equal(css.includes(".graph-svg"), true);
+  assert.equal(css.includes(".graph-node.table"), true);
+  assert.equal(css.includes(".graph-node.field"), true);
+  assert.equal(css.includes(".graph-node.target"), true);
+  assert.equal(css.includes(".graph-node.result"), true);
+  assert.equal(css.includes(".graph-edge"), true);
+});
+
+test("insert overwrite target table and 13 projection columns", () => {
+  const sql = `INSERT OVERWRITE TABLE ads_lift_crdttradinvg_gt_rcvbovdudspahis_df PARTITION (pt='\${bizdate}')
+SELECT
+  m.mana_org,
+  m.crnt_date,
+  m.cust_id,
+  m.ovdu_days,
+  m.ovdu_rcy1,
+  SUM(m.ovdu_rcy1) AS ovdu_rcy1_sum,
+  SUM(IF(m.ovdu_days > 30, m.ovdu_rcy1, 0)) AS ovdu_rcy1_30_days,
+  CASE WHEN m.ovdu_days > 60 THEN m.ovdu_rcy1 ELSE 0 END AS ovdu_rcy1_60_days,
+  m.col_a, -- comment should not pollute next item
+  m.col_b,
+  uuid() AS icode,
+  current_timestamp() AS etl_time,
+  m.col_c
+FROM gf_core.dwd_crdt_trad_invg_gt_rcvb_ovdu_dspa_his_df m
+WHERE m.pt='\${bizdate}'
+GROUP BY
+  m.mana_org,m.crnt_date,m.cust_id,m.ovdu_days,m.ovdu_rcy1,m.col_a,m.col_b,m.col_c`;
+
+  const result = analyzeSqlLineage(sql, {});
+
+  assert.equal(result.lineageTree.length, 13);
+  assert.equal(result.rows.every((r) => r.targetTable === "ads_lift_crdttradinvg_gt_rcvbovdudspahis_df"), true);
+  assert.equal(result.rows.some((r) => /from|where|group by/i.test(String(r.sourceField))), false);
+
+  const has30DaysA = result.lineageEdges.some((e) => e.targetField === "ovdu_rcy1_30_days" && e.sourceField === "ovdu_days");
+  const has30DaysB = result.lineageEdges.some((e) => e.targetField === "ovdu_rcy1_30_days" && e.sourceField === "ovdu_rcy1");
+  assert.equal(has30DaysA, true);
+  assert.equal(has30DaysB, true);
+
+  const icode = result.lineageEdges.find((e) => e.targetField === "icode");
+  const etlTime = result.lineageEdges.find((e) => e.targetField === "etl_time");
+  assert.equal(icode.sourceTable, "SYS_FUNC");
+  assert.equal(etlTime.sourceTable, "SYS_FUNC");
+
+  const bareFields = ["mana_org", "crnt_date", "cust_id", "ovdu_days", "ovdu_rcy1", "col_a", "col_b", "col_c"];
+  bareFields.forEach((f) => {
+    const hit = result.lineageEdges.find((e) => e.targetField === f);
+    assert.equal(hit.sourceTable, "gf_core.dwd_crdt_trad_invg_gt_rcvb_ovdu_dspa_his_df");
+  });
+});
+
+test("insert overwrite parser should not concat long unresolved column text", () => {
+  const sql = `INSERT OVERWRITE TABLE ads_test PARTITION (pt='\${bizdate}')
+SELECT
+  m.col_a, -- c1
+  m.col_b,
+  SUM(IF(m.col_a > 0, m.col_b, 0)) AS col_c
+FROM gf_core.test_table m`;
+
+  const result = analyzeSqlLineage(sql, {});
+  const targets = result.lineageTree.map((x) => x.targetField).sort();
+  assert.deepEqual(targets, ["col_a", "col_b", "col_c"]);
+  assert.equal(result.rows.some((r) => String(r.sourceField).length > 120), false);
 });
