@@ -7,91 +7,130 @@
     then: true, else: true, end: true, over: true, partition: true, by: true, group: true,
     order: true, having: true, union: true, all: true, with: true, distinct: true, sum: true,
     count: true, avg: true, min: true, max: true, in: true, is: true, null: true, like: true,
-    asc: true, desc: true, cast: true, coalesce: true, into: true, create: true, table: true,
+    cast: true, round: true, if: true, datediff: true, date_format: true, to_date: true,
+    int: true, integer: true, bigint: true, decimal: true, double: true, float: true,
+    string: true, varchar: true, char: true, boolean: true, date: true, timestamp: true,
+    create: true, table: true, insert: true, into: true,
   };
 
   function normalizeSql(sql) {
     return (sql || "").replace(/\r\n?/g, "\n").trim();
   }
 
-  function stripStatementTail(sql) {
+  function stripTailSemicolon(sql) {
     return sql.replace(/;\s*$/, "");
   }
 
-  function normalizeIdentifier(id) {
-    if (!id) {
+  function normalizeIdentifier(raw) {
+    if (!raw) {
       return "";
     }
-    var trimmed = id.trim();
-    if ((/^".*"$/).test(trimmed) || (/^`.*`$/).test(trimmed) || (/^\[.*\]$/).test(trimmed)) {
-      return trimmed.slice(1, -1);
+    var s = raw.trim();
+    if ((/^".*"$/).test(s) || (/^`.*`$/).test(s) || (/^\[.*\]$/).test(s)) {
+      return s.slice(1, -1);
     }
-    return trimmed;
+    return s;
   }
 
-  function findTopLevelKeyword(sql, keyword, fromIndex) {
-    var target = keyword.toLowerCase();
+  function dedupeSources(sources) {
+    var seen = {};
+    var out = [];
+    for (var i = 0; i < sources.length; i += 1) {
+      var item = sources[i];
+      var key = item.table + "::" + item.field;
+      if (!seen[key]) {
+        seen[key] = true;
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
+  function scanTopLevel(text, onChar) {
     var depth = 0;
     var inSingle = false;
     var inDouble = false;
+    var inBacktick = false;
+    var inBracket = false;
 
-    for (var i = fromIndex || 0; i < sql.length; i += 1) {
-      var ch = sql[i];
-      var prev = i > 0 ? sql[i - 1] : "";
+    for (var i = 0; i < text.length; i += 1) {
+      var ch = text[i];
+      var prev = i > 0 ? text[i - 1] : "";
 
-      if (ch === "'" && !inDouble && prev !== "\\") {
+      if (!inDouble && !inBacktick && !inBracket && ch === "'" && prev !== "\\") {
         inSingle = !inSingle;
-      } else if (ch === '"' && !inSingle && prev !== "\\") {
+      } else if (!inSingle && !inBacktick && !inBracket && ch === '"' && prev !== "\\") {
         inDouble = !inDouble;
+      } else if (!inSingle && !inDouble && !inBracket && ch === "`") {
+        inBacktick = !inBacktick;
+      } else if (!inSingle && !inDouble && !inBacktick && ch === "[") {
+        inBracket = true;
+      } else if (inBracket && ch === "]") {
+        inBracket = false;
       }
 
-      if (inSingle || inDouble) {
+      if (inSingle || inDouble || inBacktick || inBracket) {
         continue;
       }
 
       if (ch === "(") {
         depth += 1;
-        continue;
-      }
-      if (ch === ")") {
+      } else if (ch === ")") {
         depth = Math.max(0, depth - 1);
-        continue;
       }
 
-      if (depth !== 0) {
-        continue;
-      }
-
-      if (sql.slice(i, i + target.length).toLowerCase() === target) {
-        var leftOk = i === 0 || !/[\w$]/.test(sql[i - 1]);
-        var rightOk = i + target.length >= sql.length || !/[\w$]/.test(sql[i + target.length]);
-        if (leftOk && rightOk) {
-          return i;
-        }
+      if (onChar(i, ch, depth)) {
+        return i;
       }
     }
 
     return -1;
   }
 
-  function splitTopLevel(text, separatorChar) {
-    var result = [];
-    var token = "";
+  function findTopLevelKeyword(sql, keyword, start) {
+    var target = keyword.toLowerCase();
+    var base = start || 0;
+    var hit = scanTopLevel(sql.slice(base), function (offset, ch, depth) {
+      if (depth !== 0) {
+        return false;
+      }
+      var i = base + offset;
+      if (sql.slice(i, i + target.length).toLowerCase() !== target) {
+        return false;
+      }
+      var leftOk = i === 0 || !/[\w$]/.test(sql[i - 1]);
+      var rightOk = i + target.length >= sql.length || !/[\w$]/.test(sql[i + target.length]);
+      return leftOk && rightOk;
+    });
+    return hit < 0 ? -1 : base + hit;
+  }
+
+  function splitTopLevelByChar(text, sep) {
+    var out = [];
+    var buf = "";
     var depth = 0;
     var inSingle = false;
     var inDouble = false;
+    var inBacktick = false;
+    var inBracket = false;
 
     for (var i = 0; i < text.length; i += 1) {
       var ch = text[i];
       var prev = i > 0 ? text[i - 1] : "";
 
-      if (ch === "'" && !inDouble && prev !== "\\") {
+      if (!inDouble && !inBacktick && !inBracket && ch === "'" && prev !== "\\") {
         inSingle = !inSingle;
-      } else if (ch === '"' && !inSingle && prev !== "\\") {
+      } else if (!inSingle && !inBacktick && !inBracket && ch === '"' && prev !== "\\") {
         inDouble = !inDouble;
+      } else if (!inSingle && !inDouble && !inBracket && ch === "`") {
+        inBacktick = !inBacktick;
+      } else if (!inSingle && !inDouble && !inBacktick && ch === "[") {
+        inBracket = true;
+      } else if (inBracket && ch === "]") {
+        inBracket = false;
       }
 
-      if (!inSingle && !inDouble) {
+      if (!inSingle && !inDouble && !inBacktick && !inBracket) {
         if (ch === "(") {
           depth += 1;
         } else if (ch === ")") {
@@ -99,183 +138,267 @@
         }
       }
 
-      if (ch === separatorChar && depth === 0 && !inSingle && !inDouble) {
-        if (token.trim()) {
-          result.push(token.trim());
+      if (!inSingle && !inDouble && !inBacktick && !inBracket && depth === 0 && ch === sep) {
+        if (buf.trim()) {
+          out.push(buf.trim());
         }
-        token = "";
-      } else {
-        token += ch;
+        buf = "";
+        continue;
       }
+      buf += ch;
     }
 
-    if (token.trim()) {
-      result.push(token.trim());
+    if (buf.trim()) {
+      out.push(buf.trim());
     }
-    return result;
+    return out;
   }
 
   function splitSelectItems(selectPart) {
-    return splitTopLevel(selectPart, ",");
+    return splitTopLevelByChar(selectPart, ",");
   }
 
   function stripTrailingComment(item) {
-    var comment = "";
-    var clean = item;
-
-    var lineMatch = item.match(/\s--\s*(.+)$/);
-    if (lineMatch) {
-      comment = lineMatch[1].trim();
-      clean = item.slice(0, lineMatch.index).trim();
-      return { clean: clean, comment: comment };
+    var lineIdx = item.search(/\s--\s*/);
+    if (lineIdx >= 0) {
+      return {
+        clean: item.slice(0, lineIdx).trim(),
+        comment: item.slice(lineIdx).replace(/^\s--\s*/, "").trim(),
+      };
     }
 
-    var blockMatch = item.match(/\/\*\s*([\s\S]*?)\s*\*\/$/);
-    if (blockMatch) {
-      comment = blockMatch[1].replace(/\s+/g, " ").trim();
-      clean = item.slice(0, blockMatch.index).trim();
-      return { clean: clean, comment: comment };
+    var block = item.match(/\/\*\s*([\s\S]*?)\s*\*\/$/);
+    if (block) {
+      return {
+        clean: item.slice(0, block.index).trim(),
+        comment: block[1].replace(/\s+/g, " ").trim(),
+      };
     }
 
-    return { clean: clean.trim(), comment: "" };
+    return { clean: item.trim(), comment: "" };
   }
 
-  function isSimpleColumnExpr(expr) {
-    return /^(?:(?:[a-zA-Z_][\w$]*|`[^`]+`|\[[^\]]+\]|"[^"]+")(?:\.(?:[a-zA-Z_][\w$]*|`[^`]+`|\[[^\]]+\]|"[^"]+"))*)$/.test(expr);
-  }
-
-  function parseFieldExpression(item) {
-    var commentInfo = stripTrailingComment(item);
-    var clean = commentInfo.clean;
-    var comment = commentInfo.comment;
+  function parseSelectItem(rawItem) {
+    var cleaned = stripTrailingComment(rawItem);
+    var expr = cleaned.clean;
+    var comment = cleaned.comment;
     var aliasPattern = '(?:"[^"]+"|`[^`]+`|\\[[^\\]]+\\]|[a-zA-Z_][\\w$]*)';
 
-    var asMatch = clean.match(new RegExp("^(.+?)\\s+as\\s+(" + aliasPattern + ")$", "i"));
+    var asMatch = expr.match(new RegExp("^([\\s\\S]+?)\\s+as\\s+(" + aliasPattern + ")$", "i"));
     if (asMatch) {
       return {
         expression: asMatch[1].trim(),
-        sourceField: asMatch[1].trim(),
-        mappedField: normalizeIdentifier(asMatch[2].trim()),
+        output: normalizeIdentifier(asMatch[2].trim()),
         comment: comment,
       };
     }
 
-    var noAsMatch = clean.match(new RegExp("^(.*\\S)\\s+(" + aliasPattern + ")$"));
-    if (noAsMatch) {
-      var sourceCandidate = noAsMatch[1].trim();
-      var aliasCandidate = normalizeIdentifier(noAsMatch[2].trim());
-      if (isSimpleColumnExpr(sourceCandidate) && !/^distinct$/i.test(sourceCandidate)) {
+    var noAs = expr.match(new RegExp("^([\\s\\S]+?)\\s+(" + aliasPattern + ")$"));
+    if (noAs) {
+      var left = noAs[1].trim();
+      var right = normalizeIdentifier(noAs[2].trim());
+      if (!/[+\-*/%<>=,]$/.test(left) && !/^distinct$/i.test(left)) {
         return {
-          expression: sourceCandidate,
-          sourceField: sourceCandidate,
-          mappedField: aliasCandidate,
+          expression: left,
+          output: right,
           comment: comment,
         };
       }
     }
 
+    var fallback = expr.trim();
+    var simple = fallback.match(/([a-zA-Z_][\w$]*)$/);
     return {
-      expression: clean,
-      sourceField: clean,
-      mappedField: clean,
+      expression: fallback,
+      output: simple ? simple[1] : fallback,
       comment: comment,
     };
   }
 
-  function parseSourceTable(sql) {
-    var fromIdx = findTopLevelKeyword(sql, "from", 0);
-    if (fromIdx < 0) {
-      return "未识别";
+  function sanitizeForRefScan(expression) {
+    var out = "";
+    var i = 0;
+    while (i < expression.length) {
+      var ch = expression[i];
+      var next = i + 1 < expression.length ? expression[i + 1] : "";
+
+      if (ch === "'" || ch === '"' || ch === "`") {
+        var end = ch;
+        out += " ";
+        i += 1;
+        while (i < expression.length) {
+          if (expression[i] === end) {
+            if (end === "'" && i + 1 < expression.length && expression[i + 1] === "'") {
+              i += 2;
+              continue;
+            }
+            i += 1;
+            break;
+          }
+          i += 1;
+        }
+        continue;
+      }
+
+      if (ch === "[") {
+        out += " ";
+        i += 1;
+        while (i < expression.length && expression[i] !== "]") {
+          i += 1;
+        }
+        i += 1;
+        continue;
+      }
+
+      if (ch === "-" && next === "-") {
+        out += " ";
+        i += 2;
+        while (i < expression.length && expression[i] !== "\n") {
+          i += 1;
+        }
+        continue;
+      }
+
+      if (ch === "/" && next === "*") {
+        out += " ";
+        i += 2;
+        while (i + 1 < expression.length && !(expression[i] === "*" && expression[i + 1] === "/")) {
+          i += 1;
+        }
+        i += 2;
+        continue;
+      }
+
+      out += ch;
+      i += 1;
     }
-    var afterFrom = sql.slice(fromIdx + 4).trim();
-    if (!afterFrom || afterFrom[0] === "(") {
-      return "未识别";
-    }
-    var tableMatch = afterFrom.match(/^([a-zA-Z_][\w$.]*)(?:\s+[a-zA-Z_][\w$]*)?/);
-    return tableMatch ? tableMatch[1] : "未识别";
+
+    return out;
   }
 
-  function extractSelectAndTail(selectSql) {
-    var normalized = stripStatementTail(normalizeSql(selectSql));
-    var selectMatch = normalized.match(/^\s*select\s+/i);
-    if (!selectMatch) {
-      throw new Error("仅支持 SELECT 语句解析");
+  function extractColumnRefs(expression) {
+    var refs = [];
+    var seen = {};
+    var clean = sanitizeForRefScan(expression);
+
+    var qual = /\b([a-zA-Z_][\w$]*)\s*\.\s*([a-zA-Z_][\w$]*)\b/g;
+    var m;
+    while ((m = qual.exec(clean))) {
+      var key = m[1] + "." + m[2];
+      if (!seen[key]) {
+        seen[key] = true;
+        refs.push({ qualifier: m[1], field: m[2] });
+      }
     }
 
-    var fromIdx = findTopLevelKeyword(normalized, "from", selectMatch[0].length);
-    if (fromIdx < 0) {
-      return {
-        full: normalized,
-        selectPart: normalized.slice(selectMatch[0].length).trim(),
-        tail: "",
-      };
+    var stripped = clean.replace(qual, " ");
+    var token = /\b([a-zA-Z_][\w$]*)\b/g;
+    while ((m = token.exec(stripped))) {
+      var t = m[1];
+      var lower = t.toLowerCase();
+      var nextChar = stripped[m.index + t.length] || "";
+      if (SQL_KEYWORDS[lower] || nextChar === "(") {
+        continue;
+      }
+      if (!seen[t]) {
+        seen[t] = true;
+        refs.push({ qualifier: null, field: t });
+      }
     }
 
-    return {
-      full: normalized,
-      selectPart: normalized.slice(selectMatch[0].length, fromIdx).trim(),
-      tail: normalized.slice(fromIdx),
-    };
+    return refs;
+  }
+
+  function stripOuterParens(sql) {
+    var s = sql.trim();
+    if (!s || s[0] !== "(") {
+      return s;
+    }
+    var depth = 0;
+    for (var i = 0; i < s.length; i += 1) {
+      if (s[i] === "(") {
+        depth += 1;
+      } else if (s[i] === ")") {
+        depth -= 1;
+        if (depth === 0 && i !== s.length - 1) {
+          return s;
+        }
+      }
+    }
+    if (depth === 0 && s[s.length - 1] === ")") {
+      return s.slice(1, -1).trim();
+    }
+    return s;
   }
 
   function splitUnionBranches(sql) {
-    var parts = [];
-    var token = "";
+    var branches = [];
+    var buf = "";
+    var i = 0;
     var depth = 0;
     var inSingle = false;
     var inDouble = false;
+    var inBacktick = false;
+    var inBracket = false;
 
-    for (var i = 0; i < sql.length; i += 1) {
+    while (i < sql.length) {
       var ch = sql[i];
       var prev = i > 0 ? sql[i - 1] : "";
-      if (ch === "'" && !inDouble && prev !== "\\") {
+      var rest = sql.slice(i);
+
+      if (!inDouble && !inBacktick && !inBracket && ch === "'" && prev !== "\\") {
         inSingle = !inSingle;
-      } else if (ch === '"' && !inSingle && prev !== "\\") {
+      } else if (!inSingle && !inBacktick && !inBracket && ch === '"' && prev !== "\\") {
         inDouble = !inDouble;
+      } else if (!inSingle && !inDouble && !inBracket && ch === "`") {
+        inBacktick = !inBacktick;
+      } else if (!inSingle && !inDouble && !inBacktick && ch === "[") {
+        inBracket = true;
+      } else if (inBracket && ch === "]") {
+        inBracket = false;
       }
 
-      if (!inSingle && !inDouble) {
+      if (!inSingle && !inDouble && !inBacktick && !inBracket) {
         if (ch === "(") {
           depth += 1;
         } else if (ch === ")") {
           depth = Math.max(0, depth - 1);
         }
 
-        if (depth === 0 && /^union\b/i.test(sql.slice(i))) {
-          if (token.trim()) {
-            parts.push(token.trim());
+        if (depth === 0) {
+          var unionMatch = rest.match(/^union(?:\s+all)?\b/i);
+          if (unionMatch) {
+            if (buf.trim()) {
+              branches.push(buf.trim());
+            }
+            buf = "";
+            i += unionMatch[0].length;
+            continue;
           }
-          token = "";
-          i += 4;
-          if (/^\s+all\b/i.test(sql.slice(i + 1))) {
-            i += sql.slice(i + 1).match(/^\s+all\b/i)[0].length;
-          }
-          continue;
         }
       }
 
-      token += ch;
+      buf += ch;
+      i += 1;
     }
 
-    if (token.trim()) {
-      parts.push(token.trim());
+    if (buf.trim()) {
+      branches.push(buf.trim());
     }
-
-    return parts.length ? parts : [sql];
+    return branches.length ? branches : [sql];
   }
 
   function parseWithClause(sql) {
-    var normalized = stripStatementTail(normalizeSql(sql));
+    var normalized = stripTailSemicolon(normalizeSql(sql));
     if (!/^with\b/i.test(normalized)) {
       return { ctes: [], mainQuery: normalized };
     }
 
     var ctes = [];
     var i = normalized.match(/^with\b/i)[0].length;
-    var len = normalized.length;
 
-    while (i < len) {
-      while (i < len && /\s/.test(normalized[i])) {
+    while (i < normalized.length) {
+      while (i < normalized.length && /\s/.test(normalized[i])) {
         i += 1;
       }
       var nameMatch = normalized.slice(i).match(/^([a-zA-Z_][\w$]*)/);
@@ -285,14 +408,14 @@
       var cteName = nameMatch[1];
       i += nameMatch[0].length;
 
-      while (i < len && /\s/.test(normalized[i])) {
+      while (i < normalized.length && /\s/.test(normalized[i])) {
         i += 1;
       }
 
       if (normalized[i] === "(") {
         var colDepth = 1;
         i += 1;
-        while (i < len && colDepth > 0) {
+        while (i < normalized.length && colDepth > 0) {
           if (normalized[i] === "(") {
             colDepth += 1;
           } else if (normalized[i] === ")") {
@@ -300,7 +423,7 @@
           }
           i += 1;
         }
-        while (i < len && /\s/.test(normalized[i])) {
+        while (i < normalized.length && /\s/.test(normalized[i])) {
           i += 1;
         }
       }
@@ -313,28 +436,17 @@
 
       var depth = 1;
       var start = i;
-      var inSingle = false;
-      var inDouble = false;
-      while (i < len && depth > 0) {
-        var ch = normalized[i];
-        var prev = i > 0 ? normalized[i - 1] : "";
-        if (ch === "'" && !inDouble && prev !== "\\") {
-          inSingle = !inSingle;
-        } else if (ch === '"' && !inSingle && prev !== "\\") {
-          inDouble = !inDouble;
-        } else if (!inSingle && !inDouble) {
-          if (ch === "(") {
-            depth += 1;
-          } else if (ch === ")") {
-            depth -= 1;
-          }
+      while (i < normalized.length && depth > 0) {
+        if (normalized[i] === "(") {
+          depth += 1;
+        } else if (normalized[i] === ")") {
+          depth -= 1;
         }
         i += 1;
       }
-      var inner = normalized.slice(start, i - 1).trim();
-      ctes.push({ name: cteName, sql: inner });
+      ctes.push({ name: cteName, sql: normalized.slice(start, i - 1).trim() });
 
-      while (i < len && /\s/.test(normalized[i])) {
+      while (i < normalized.length && /\s/.test(normalized[i])) {
         i += 1;
       }
       if (normalized[i] === ",") {
@@ -350,285 +462,439 @@
     };
   }
 
-  function dedupeSources(sources) {
-    var seen = {};
-    var out = [];
-    for (var i = 0; i < sources.length; i += 1) {
-      var src = sources[i];
-      var key = src.table + "::" + src.field;
-      if (!seen[key]) {
-        seen[key] = true;
-        out.push(src);
+  function getSelectFromParts(sql) {
+    var s = stripOuterParens(stripTailSemicolon(normalizeSql(sql)));
+    var selectIdx = findTopLevelKeyword(s, "select", 0);
+    if (selectIdx < 0) {
+      throw new Error("Only SELECT statements are supported");
+    }
+    var fromIdx = findTopLevelKeyword(s, "from", selectIdx + 6);
+    if (fromIdx < 0) {
+      return { selectPart: s.slice(selectIdx + 6).trim(), fromPart: "" };
+    }
+
+    var fromBody = s.slice(fromIdx + 4).trim();
+    var boundaries = ["where", "group", "having", "order", "limit", "union"];
+    var cut = -1;
+    for (var i = 0; i < boundaries.length; i += 1) {
+      var idx = findTopLevelKeyword(fromBody, boundaries[i], 0);
+      if (idx >= 0 && (cut < 0 || idx < cut)) {
+        cut = idx;
       }
     }
-    return out;
+
+    return {
+      selectPart: s.slice(selectIdx + 6, fromIdx).trim(),
+      fromPart: cut < 0 ? fromBody : fromBody.slice(0, cut).trim(),
+    };
   }
 
-  function parseFromSources(fromClause, cteEnv, derivedCounter) {
-    var joinSplit = splitTopLevel(
-      fromClause
-        .replace(/\bleft\s+join\b/gi, "|JOIN|")
-        .replace(/\bright\s+join\b/gi, "|JOIN|")
-        .replace(/\binner\s+join\b/gi, "|JOIN|")
-        .replace(/\bfull\s+join\b/gi, "|JOIN|")
-        .replace(/\bjoin\b/gi, "|JOIN|")
-        .replace(/,/g, "|JOIN|"),
-      "|"
-    );
-
-    var rawSources = [];
-    for (var i = 0; i < joinSplit.length; i += 1) {
-      var piece = joinSplit[i].trim();
-      if (!piece || /^join$/i.test(piece) || /^on\b/i.test(piece)) {
-        continue;
-      }
-      if (/^on\b/i.test(piece)) {
-        continue;
-      }
-      rawSources.push(piece.replace(/^JOIN\|?/i, "").trim());
-    }
-
-    var sourceMap = {};
-    var primaryTable = "未识别";
-
-    for (var s = 0; s < rawSources.length; s += 1) {
-      var src = rawSources[s];
-      if (!src) {
-        continue;
-      }
-
-      var subqueryMatch = src.match(/^\((.+)\)\s+([a-zA-Z_][\w$]*)$/i);
-      if (subqueryMatch) {
-        var alias = subqueryMatch[2];
-        var analysis = analyzeSelectQuery(subqueryMatch[1], {
-          targetTable: "DERIVED_" + (derivedCounter.count += 1),
-          cteEnv: cteEnv,
-          derivedCounter: derivedCounter,
-        });
-        sourceMap[alias] = {
-          type: "derived",
-          table: analysis.outputTable,
-          fields: analysis.fields,
-        };
-        if (primaryTable === "未识别") {
-          primaryTable = analysis.outputTable;
-        }
-        continue;
-      }
-
-      var tableMatch = src.match(/^([a-zA-Z_][\w$.]*)(?:\s+(?:as\s+)?([a-zA-Z_][\w$]*))?/i);
-      if (tableMatch) {
-        var tableName = tableMatch[1];
-        var aliasName = tableMatch[2] || tableName;
-        if (cteEnv[tableName]) {
-          sourceMap[aliasName] = {
-            type: "derived",
-            table: tableName,
-            fields: cteEnv[tableName].fields,
-          };
-        } else {
-          sourceMap[aliasName] = {
-            type: "base",
-            table: tableName,
-            fields: [],
-          };
-        }
-        if (primaryTable === "未识别") {
-          primaryTable = tableName;
-        }
-      }
-    }
-
-    return { sourceMap: sourceMap, primaryTable: primaryTable };
-  }
-
-  function extractColumnRefs(expression) {
-    var refs = [];
-    var qualifiedRegex = /\b([a-zA-Z_][\w$]*)\.([a-zA-Z_][\w$]*)\b/g;
-    var seen = {};
-    var match;
-    while ((match = qualifiedRegex.exec(expression))) {
-      var key = match[1] + "." + match[2];
-      if (!seen[key]) {
-        seen[key] = true;
-        refs.push({ qualifier: match[1], field: match[2] });
-      }
-    }
-
-    var stripped = expression.replace(qualifiedRegex, " ");
-    var tokenRegex = /\b([a-zA-Z_][\w$]*)\b/g;
-    while ((match = tokenRegex.exec(stripped))) {
-      var token = match[1];
-      var lower = token.toLowerCase();
-      var nextChar = stripped[match.index + token.length] || "";
-      if (SQL_KEYWORDS[lower] || /\d/.test(token[0]) || nextChar === "(") {
-        continue;
-      }
-      if (!seen[token]) {
-        seen[token] = true;
-        refs.push({ qualifier: null, field: token });
-      }
-    }
-
-    return refs;
-  }
-
-  function resolveRefs(refs, sourceMap) {
-    var aliasKeys = Object.keys(sourceMap);
-    if (!refs.length) {
-      return [];
-    }
-
+  function splitFromSources(fromPart) {
     var sources = [];
+    var chunk = "";
+    var i = 0;
+    var depth = 0;
+    var inSingle = false;
+    var inDouble = false;
+    var inBacktick = false;
+    var inBracket = false;
 
-    for (var i = 0; i < refs.length; i += 1) {
-      var ref = refs[i];
-      if (ref.qualifier) {
-        var qualifiedSrc = sourceMap[ref.qualifier];
-        if (!qualifiedSrc) {
-          sources.push({ table: "未识别", field: ref.field });
+    function pushChunk(text) {
+      var cleaned = text.trim();
+      if (!cleaned) {
+        return;
+      }
+      var onIdx = findTopLevelKeyword(cleaned, "on", 0);
+      if (onIdx >= 0) {
+        cleaned = cleaned.slice(0, onIdx).trim();
+      }
+      if (cleaned) {
+        sources.push(cleaned);
+      }
+    }
+
+    while (i < fromPart.length) {
+      var ch = fromPart[i];
+      var prev = i > 0 ? fromPart[i - 1] : "";
+      var rest = fromPart.slice(i);
+
+      if (!inDouble && !inBacktick && !inBracket && ch === "'" && prev !== "\\") {
+        inSingle = !inSingle;
+      } else if (!inSingle && !inBacktick && !inBracket && ch === '"' && prev !== "\\") {
+        inDouble = !inDouble;
+      } else if (!inSingle && !inDouble && !inBracket && ch === "`") {
+        inBacktick = !inBacktick;
+      } else if (!inSingle && !inDouble && !inBacktick && ch === "[") {
+        inBracket = true;
+      } else if (inBracket && ch === "]") {
+        inBracket = false;
+      }
+
+      if (!inSingle && !inDouble && !inBacktick && !inBracket) {
+        if (ch === "(") {
+          depth += 1;
+        } else if (ch === ")") {
+          depth = Math.max(0, depth - 1);
+        }
+      }
+
+      if (!inSingle && !inDouble && !inBacktick && !inBracket && depth === 0 && ch === ",") {
+        pushChunk(chunk);
+        chunk = "";
+        i += 1;
+        continue;
+      }
+
+      if (!inSingle && !inDouble && !inBacktick && !inBracket && depth === 0) {
+        var joinMatch = rest.match(/^(left\s+join|right\s+join|full\s+join|inner\s+join|join)\b/i);
+        if (joinMatch) {
+          pushChunk(chunk);
+          chunk = "";
+          i += joinMatch[0].length;
           continue;
         }
-
-        if (qualifiedSrc.type === "derived") {
-          var derivedField = qualifiedSrc.fields.find(function (f) {
-            return f.outputField.toLowerCase() === ref.field.toLowerCase();
-          });
-          if (derivedField) {
-            sources = sources.concat(derivedField.sources);
-          } else {
-            sources.push({ table: qualifiedSrc.table, field: ref.field });
-          }
-        } else {
-          sources.push({ table: qualifiedSrc.table, field: ref.field });
-        }
-        continue;
       }
 
-      if (aliasKeys.length === 1) {
-        var only = sourceMap[aliasKeys[0]];
-        if (only.type === "derived") {
-          var target = only.fields.find(function (f) {
-            return f.outputField.toLowerCase() === ref.field.toLowerCase();
-          });
-          if (target) {
-            sources = sources.concat(target.sources);
-          } else {
-            sources.push({ table: only.table, field: ref.field });
-          }
-        } else {
-          sources.push({ table: only.table, field: ref.field });
-        }
-      } else {
-        sources.push({ table: "未识别", field: ref.field });
-      }
+      chunk += ch;
+      i += 1;
     }
+    pushChunk(chunk);
 
-    return dedupeSources(sources);
+    return sources;
   }
 
-  function splitFromClauseTail(tail) {
-    if (!tail) {
-      return { fromClause: "", remainder: "" };
+  function parseSourceSpec(spec, env, debug) {
+    var trimmed = spec.trim();
+    if (!trimmed) {
+      return null;
     }
 
-    var fromMatch = tail.match(/^from\s+/i);
-    if (!fromMatch) {
-      return { fromClause: "", remainder: tail };
-    }
-
-    var boundaryKeywords = [" where ", " group by ", " having ", " order by ", " union "];
-    var idx = -1;
-    for (var i = 0; i < boundaryKeywords.length; i += 1) {
-      var found = findTopLevelKeyword(tail, boundaryKeywords[i].trim(), fromMatch[0].length);
-      if (found >= 0 && (idx < 0 || found < idx)) {
-        idx = found;
-      }
-    }
-
-    if (idx < 0) {
+    var subMatch = trimmed.match(/^\(([\s\S]*)\)\s+(?:as\s+)?([a-zA-Z_][\w$]*)$/i);
+    if (subMatch) {
+      var subSql = subMatch[1].trim();
+      var alias = subMatch[2];
+      var analyzed = analyzeQuery(subSql, env, "DERIVED", debug);
       return {
-        fromClause: tail.slice(fromMatch[0].length).trim(),
-        remainder: "",
+        alias: alias,
+        type: "derived",
+        table: analyzed.outputTable,
+        columnMap: analyzed.columnMap,
+      };
+    }
+
+    var tableMatch = trimmed.match(/^([a-zA-Z_][\w$.]*)(?:\s+(?:as\s+)?([a-zA-Z_][\w$]*))?$/i);
+    if (!tableMatch) {
+      debug.push({ type: "unparsed_source", value: trimmed });
+      return null;
+    }
+
+    var table = tableMatch[1];
+    var aliasName = tableMatch[2] || table;
+
+    if (env.tables && env.tables[table]) {
+      return {
+        alias: aliasName,
+        type: "derived",
+        table: table,
+        columnMap: env.tables[table].columnMap,
+      };
+    }
+
+    if (env.ctes && env.ctes[table]) {
+      return {
+        alias: aliasName,
+        type: "derived",
+        table: table,
+        columnMap: env.ctes[table].columnMap,
       };
     }
 
     return {
-      fromClause: tail.slice(fromMatch[0].length, idx).trim(),
-      remainder: tail.slice(idx),
+      alias: aliasName,
+      type: "base",
+      table: table,
+      columnMap: null,
     };
   }
 
-  function applyStandardMapToExpression(expression, mapDict) {
-    var out = "";
-    var i = 0;
-    var len = expression.length;
+  function resolveRef(ref, sourceMap, debug) {
+    var aliases = Object.keys(sourceMap);
+    var out = [];
 
-    while (i < len) {
-      var ch = expression[i];
-      var next = i + 1 < len ? expression[i + 1] : "";
-
-      if (ch === "'" || ch === "\"" || ch === "`" || ch === "[") {
-        var endChar = ch === "[" ? "]" : ch;
-        var j = i + 1;
-        while (j < len) {
-          if (expression[j] === endChar) {
-            if (endChar === "'" && j + 1 < len && expression[j + 1] === "'") {
-              j += 2;
-              continue;
-            }
-            j += 1;
-            break;
-          }
-          if (expression[j] === "\\" && j + 1 < len && endChar !== "]") {
-            j += 2;
-            continue;
-          }
-          j += 1;
-        }
-        out += expression.slice(i, j);
-        i = j;
-        continue;
+    function resolveFromSource(src, field) {
+      if (!src) {
+        return [{ table: "UNRESOLVED", field: field }];
       }
-
-      if (ch === "-" && next === "-") {
-        var lineEnd = expression.indexOf("\n", i + 2);
-        if (lineEnd < 0) {
-          out += expression.slice(i);
-          break;
-        }
-        out += expression.slice(i, lineEnd);
-        i = lineEnd;
-        continue;
+      if (src.type === "base") {
+        return [{ table: src.table, field: field }];
       }
-
-      if (ch === "/" && next === "*") {
-        var blockEnd = expression.indexOf("*/", i + 2);
-        if (blockEnd < 0) {
-          out += expression.slice(i);
-          break;
-        }
-        out += expression.slice(i, blockEnd + 2);
-        i = blockEnd + 2;
-        continue;
+      var key = field.toLowerCase();
+      var derived = src.columnMap[key];
+      if (derived && derived.length) {
+        return derived;
       }
-
-      if (/[a-zA-Z_]/.test(ch)) {
-        var k = i + 1;
-        while (k < len && /[\w$]/.test(expression[k])) {
-          k += 1;
-        }
-        var token = expression.slice(i, k);
-        out += Object.prototype.hasOwnProperty.call(mapDict, token) ? mapDict[token] : token;
-        i = k;
-        continue;
-      }
-
-      out += ch;
-      i += 1;
+      return [{ table: src.table, field: field }];
     }
 
+    if (ref.qualifier) {
+      var q = sourceMap[ref.qualifier];
+      if (!q) {
+        debug.push({ type: "unknown_alias", alias: ref.qualifier, field: ref.field });
+        return [{ table: "UNRESOLVED", field: ref.field }];
+      }
+      return resolveFromSource(q, ref.field);
+    }
+
+    if (aliases.length === 1) {
+      return resolveFromSource(sourceMap[aliases[0]], ref.field);
+    }
+
+    // Try derived sources first by output column name.
+    for (var i = 0; i < aliases.length; i += 1) {
+      var src = sourceMap[aliases[i]];
+      if (src.type === "derived" && src.columnMap[ref.field.toLowerCase()]) {
+        out = out.concat(src.columnMap[ref.field.toLowerCase()]);
+      }
+    }
+    if (out.length) {
+      return dedupeSources(out);
+    }
+
+    debug.push({ type: "ambiguous_unqualified", field: ref.field, aliases: aliases });
+    return [{ table: "UNRESOLVED", field: ref.field }];
+  }
+
+  function buildColumnMap(columns) {
+    var map = {};
+    for (var i = 0; i < columns.length; i += 1) {
+      var c = columns[i];
+      map[c.output.toLowerCase()] = c.sources;
+    }
+    return map;
+  }
+
+  function mergeUnionColumns(branches) {
+    var first = branches[0] || [];
+    var merged = [];
+
+    for (var i = 0; i < first.length; i += 1) {
+      var base = {
+        output: first[i].output,
+        expression: first[i].expression,
+        comment: first[i].comment,
+        sources: [],
+      };
+      for (var b = 0; b < branches.length; b += 1) {
+        if (branches[b][i]) {
+          base.sources = base.sources.concat(branches[b][i].sources);
+        }
+      }
+      base.sources = dedupeSources(base.sources);
+      merged.push(base);
+    }
+
+    return merged;
+  }
+
+  function analyzeSingleSelect(selectSql, env, targetTable, debug) {
+    var parts = getSelectFromParts(selectSql);
+    var selectItems = splitSelectItems(parts.selectPart);
+    var fromSources = splitFromSources(parts.fromPart);
+
+    var sourceMap = {};
+    for (var i = 0; i < fromSources.length; i += 1) {
+      var src = parseSourceSpec(fromSources[i], env, debug);
+      if (src) {
+        sourceMap[src.alias] = src;
+      }
+    }
+
+    var cols = [];
+    for (var j = 0; j < selectItems.length; j += 1) {
+      var item = parseSelectItem(selectItems[j]);
+      var refs = extractColumnRefs(item.expression);
+      var sources = [];
+
+      for (var r = 0; r < refs.length; r += 1) {
+        sources = sources.concat(resolveRef(refs[r], sourceMap, debug));
+      }
+
+      sources = dedupeSources(sources);
+
+      cols.push({
+        output: normalizeIdentifier(item.output),
+        expression: item.expression,
+        comment: item.comment,
+        sources: sources,
+      });
+    }
+
+    return {
+      outputTable: targetTable,
+      columns: cols,
+      columnMap: buildColumnMap(cols),
+    };
+  }
+
+  function analyzeQuery(sql, env, targetTable, debug) {
+    var normalized = stripOuterParens(stripTailSemicolon(normalizeSql(sql)));
+    var withInfo = parseWithClause(normalized);
+
+    var scoped = {
+      tables: env.tables || {},
+      ctes: Object.assign({}, env.ctes || {}),
+    };
+
+    for (var i = 0; i < withInfo.ctes.length; i += 1) {
+      var cte = withInfo.ctes[i];
+      var cteAnalyzed = analyzeQuery(cte.sql, scoped, cte.name, debug);
+      scoped.ctes[cte.name] = {
+        columnMap: cteAnalyzed.columnMap,
+      };
+    }
+
+    var branches = splitUnionBranches(withInfo.mainQuery);
+    var branchCols = [];
+    for (var b = 0; b < branches.length; b += 1) {
+      branchCols.push(analyzeSingleSelect(branches[b], scoped, targetTable, debug).columns);
+    }
+
+    var columns = mergeUnionColumns(branchCols);
+    return {
+      outputTable: targetTable,
+      columns: columns,
+      columnMap: buildColumnMap(columns),
+    };
+  }
+
+  function parseStatementTarget(sql, index) {
+    var s = normalizeSql(sql);
+    var create = s.match(/^create\s+table\s+([a-zA-Z_][\w$.]*)\s+as\s+([\s\S]+)$/i);
+    if (create) {
+      return { targetTable: create[1], query: create[2] };
+    }
+
+    var insert = s.match(/^insert\s+into\s+([a-zA-Z_][\w$.]*)\s+([\s\S]+)$/i);
+    if (insert) {
+      return { targetTable: insert[1], query: insert[2] };
+    }
+
+    return { targetTable: "RESULT_" + (index + 1), query: s };
+  }
+
+  function splitStatements(sql) {
+    return splitTopLevelByChar(sql, ";").filter(function (x) { return x.trim(); });
+  }
+
+  function edgesFromAnalysis(analysis, targetTable) {
+    var edges = [];
+    for (var i = 0; i < analysis.columns.length; i += 1) {
+      var col = analysis.columns[i];
+      var srcs = col.sources.length ? col.sources : [{ table: "UNRESOLVED", field: col.expression }];
+      for (var s = 0; s < srcs.length; s += 1) {
+        edges.push({
+          sourceTable: srcs[s].table,
+          sourceField: srcs[s].field,
+          targetTable: targetTable,
+          targetField: col.output,
+          comment: col.comment || "",
+          expression: col.expression,
+        });
+      }
+    }
+    return edges;
+  }
+
+  function dedupeEdges(edges) {
+    var seen = {};
+    var out = [];
+    for (var i = 0; i < edges.length; i += 1) {
+      var e = edges[i];
+      var key = [e.sourceTable, e.sourceField, e.targetTable, e.targetField].join("|");
+      if (!seen[key]) {
+        seen[key] = true;
+        out.push(e);
+      }
+    }
     return out;
+  }
+
+  function parseSourceTable(sql) {
+    var parts = getSelectFromParts(sql);
+    var sources = splitFromSources(parts.fromPart);
+    if (!sources.length) {
+      return "UNRESOLVED";
+    }
+    var first = sources[0].match(/^([a-zA-Z_][\w$.]*)/);
+    return first ? first[1] : "UNRESOLVED";
+  }
+
+  function parseSqlFields(sql) {
+    var result = analyzeSqlLineage(sql, {});
+    var rows = result.rows.map(function (r, idx) {
+      return {
+        index: idx + 1,
+        sourceTable: r.sourceTable,
+        sourceField: r.sourceField,
+        mappedField: r.mappedField,
+        comment: r.comment || "",
+      };
+    });
+    return {
+      sourceTable: rows[0] ? rows[0].sourceTable : "UNRESOLVED",
+      rows: rows,
+      warnings: result.warnings,
+    };
+  }
+
+  function analyzeSqlLineage(sql, options) {
+    var normalized = stripTailSemicolon(normalizeSql(sql));
+    if (!normalized) {
+      throw new Error("SQL is empty");
+    }
+
+    var statements = splitStatements(normalized);
+    var tableEnv = {};
+    var allEdges = [];
+    var debug = [];
+
+    for (var i = 0; i < statements.length; i += 1) {
+      var stmt = parseStatementTarget(statements[i], i);
+      var analysis = analyzeQuery(stmt.query, { tables: tableEnv, ctes: {} }, stmt.targetTable, debug);
+      var edges = edgesFromAnalysis(analysis, stmt.targetTable);
+      allEdges = allEdges.concat(edges);
+      tableEnv[stmt.targetTable] = {
+        columnMap: analysis.columnMap,
+      };
+    }
+
+    allEdges = dedupeEdges(allEdges);
+
+    var rows = allEdges.map(function (e, idx) {
+      return {
+        index: idx + 1,
+        sourceTable: e.sourceTable,
+        sourceField: e.sourceField,
+        mappedField: e.targetField,
+        targetTable: e.targetTable,
+        comment: e.comment || "",
+        expression: e.expression,
+      };
+    });
+
+    return {
+      rows: rows,
+      lineageEdges: allEdges,
+      rewrittenSql: "",
+      renameReport: [],
+      astSummary: {
+        statementCount: statements.length,
+        edgeCount: allEdges.length,
+        fieldCount: rows.length,
+      },
+      warnings: allEdges.some(function (e) { return e.sourceTable === "UNRESOLVED"; }) ? ["Contains unresolved lineage refs"] : [],
+      debugInfo: debug,
+    };
   }
 
   function parseStandardDict(raw) {
@@ -636,7 +902,6 @@
     if (!raw || !raw.trim()) {
       return dict;
     }
-
     raw.split(/\n+/).forEach(function (line) {
       var clean = line.trim();
       if (!clean) {
@@ -647,285 +912,11 @@
         dict[parts[0]] = parts[1];
       }
     });
-
     return dict;
   }
 
-  function parseCreateTableWrapper(sql) {
-    var clean = normalizeSql(sql);
-    var createMatch = clean.match(/^create\s+table\s+([a-zA-Z_][\w$.]*)\s+as\s+([\s\S]+)$/i);
-    if (createMatch) {
-      return { targetTable: createMatch[1], querySql: createMatch[2] };
-    }
-
-    var insertMatch = clean.match(/^insert\s+into\s+([a-zA-Z_][\w$.]*)\s+([\s\S]+)$/i);
-    if (insertMatch) {
-      return { targetTable: insertMatch[1], querySql: insertMatch[2] };
-    }
-
-    return { targetTable: "RESULT", querySql: clean };
-  }
-
-  function analyzeSelectQuery(sql, options) {
-    var targetTable = options.targetTable || "RESULT";
-    var cteEnv = options.cteEnv || {};
-    var derivedCounter = options.derivedCounter || { count: 0 };
-
-    var withInfo = parseWithClause(sql);
-    var scopedCteEnv = Object.assign({}, cteEnv);
-
-    withInfo.ctes.forEach(function (cte) {
-      var cteResult = analyzeSelectQuery(cte.sql, {
-        targetTable: cte.name,
-        cteEnv: scopedCteEnv,
-        derivedCounter: derivedCounter,
-      });
-      scopedCteEnv[cte.name] = {
-        outputTable: cte.name,
-        fields: cteResult.fields,
-      };
-    });
-
-    var branches = splitUnionBranches(withInfo.mainQuery);
-    var branchResults = branches.map(function (branchSql) {
-      var parts = extractSelectAndTail(branchSql);
-      if (!parts.selectPart) {
-        throw new Error("未识别到 SELECT 字段列表");
-      }
-
-      var selectItems = splitSelectItems(parts.selectPart);
-      var fromInfo = splitFromClauseTail(parts.tail);
-      var srcInfo = parseFromSources(fromInfo.fromClause, scopedCteEnv, derivedCounter);
-
-      var rows = selectItems.map(function (item, idx) {
-        var parsed = parseFieldExpression(item);
-        var refs = extractColumnRefs(parsed.expression);
-        var sources = resolveRefs(refs, srcInfo.sourceMap);
-        if (!sources.length && isSimpleColumnExpr(parsed.expression) && srcInfo.primaryTable !== "未识别") {
-          sources.push({ table: srcInfo.primaryTable, field: normalizeIdentifier(parsed.expression.split(".").pop()) });
-        }
-
-        var outputField = normalizeIdentifier(parsed.mappedField || parsed.sourceField || ("col_" + (idx + 1)));
-        return {
-          index: idx + 1,
-          sourceTable: sources.length ? sources[0].table : "未识别",
-          sourceField: sources.length ? sources[0].field : parsed.sourceField,
-          mappedField: outputField,
-          comment: parsed.comment || "",
-          expression: parsed.expression,
-          sources: sources.length ? sources : [{ table: "未识别", field: parsed.sourceField }],
-          outputField: outputField,
-        };
-      });
-
-      return {
-        rows: rows,
-        tail: parts.tail,
-        fromInfo: fromInfo,
-      };
-    });
-
-    var mergedRows = branchResults[0].rows.map(function (row, idx) {
-      var mergedSources = [];
-      branchResults.forEach(function (branch) {
-        if (branch.rows[idx]) {
-          mergedSources = mergedSources.concat(branch.rows[idx].sources);
-        }
-      });
-      mergedSources = dedupeSources(mergedSources);
-      return {
-        index: row.index,
-        sourceTable: mergedSources.length ? mergedSources[0].table : row.sourceTable,
-        sourceField: mergedSources.length ? mergedSources[0].field : row.sourceField,
-        mappedField: row.mappedField,
-        comment: row.comment,
-        expression: row.expression,
-        sources: mergedSources,
-        outputField: row.outputField,
-      };
-    });
-
-    var edges = [];
-    mergedRows.forEach(function (row) {
-      row.sources.forEach(function (src) {
-        edges.push({
-          sourceTable: src.table,
-          sourceField: src.field,
-          targetTable: targetTable,
-          targetField: row.mappedField,
-        });
-      });
-    });
-
-    return {
-      outputTable: targetTable,
-      rows: mergedRows,
-      fields: mergedRows.map(function (r) {
-        return { outputField: r.outputField, sources: r.sources };
-      }),
-      edges: edges,
-      cteNames: withInfo.ctes.map(function (c) { return c.name; }),
-    };
-  }
-
-  function rewriteSelectSql(sql, standardMap) {
-    var wrapper = parseCreateTableWrapper(sql);
-    var querySql = wrapper.querySql;
-    var withInfo = parseWithClause(querySql);
-
-    var branches = splitUnionBranches(withInfo.mainQuery);
-    var rewrittenBranches = branches.map(function (branchSql) {
-      var parts = extractSelectAndTail(branchSql);
-      var selectItems = splitSelectItems(parts.selectPart);
-
-      var rewrittenItems = selectItems.map(function (item) {
-        var parsed = parseFieldExpression(item);
-        var oldSource = parsed.expression;
-        var oldAlias = normalizeIdentifier(parsed.mappedField);
-        var newExpr = applyStandardMapToExpression(oldSource, standardMap);
-        var newAlias = standardMap[oldAlias] || oldAlias;
-        var commentSuffix = parsed.comment ? " /* " + parsed.comment + " */" : "";
-
-        if (oldAlias === oldSource || !oldAlias) {
-          var maybeSourceLeaf = normalizeIdentifier(oldSource.split(".").pop());
-          if (standardMap[maybeSourceLeaf]) {
-            newAlias = standardMap[maybeSourceLeaf];
-          }
-        }
-
-        if (newAlias && newAlias !== newExpr) {
-          return newExpr + " AS " + newAlias + commentSuffix;
-        }
-        return newExpr + commentSuffix;
-      });
-
-      return "SELECT\n  " + rewrittenItems.join(",\n  ") + (parts.tail ? "\n" + parts.tail : "");
-    });
-
-    var rebuilt = rewrittenBranches.join("\nUNION\n");
-    if (withInfo.ctes.length) {
-      var withSql = withInfo.ctes
-        .map(function (cte) {
-          return cte.name + " AS (\n" + rewriteSelectSql(cte.sql, standardMap) + "\n)";
-        })
-        .join(",\n");
-      rebuilt = "WITH " + withSql + "\n" + rebuilt;
-    }
-
-    if (wrapper.targetTable !== "RESULT") {
-      return "CREATE TABLE " + wrapper.targetTable + " AS\n" + rebuilt;
-    }
-    return rebuilt;
-  }
-
-  function buildRenameReport(rows, standardMap, sqlLocation) {
-    var report = [];
-    rows.forEach(function (row) {
-      var sourceLeaf = normalizeIdentifier((row.sourceField || "").split(".").pop());
-      var mappedLeaf = normalizeIdentifier((row.mappedField || "").split(".").pop());
-
-      if (standardMap[sourceLeaf] && standardMap[sourceLeaf] !== sourceLeaf) {
-        report.push({ oldField: sourceLeaf, newField: standardMap[sourceLeaf], location: sqlLocation });
-      }
-      if (standardMap[mappedLeaf] && standardMap[mappedLeaf] !== mappedLeaf) {
-        report.push({ oldField: mappedLeaf, newField: standardMap[mappedLeaf], location: sqlLocation });
-      }
-    });
-
-    var seen = {};
-    return report.filter(function (item) {
-      var key = item.oldField + "->" + item.newField + "@" + item.location;
-      if (seen[key]) {
-        return false;
-      }
-      seen[key] = true;
-      return true;
-    });
-  }
-
-  function parseSqlFields(sql) {
-    var normalized = stripStatementTail(normalizeSql(sql));
-    if (!normalized) {
-      throw new Error("SQL 为空");
-    }
-
-    var wrapper = parseCreateTableWrapper(normalized);
-    var lineage = analyzeSelectQuery(wrapper.querySql, {
-      targetTable: wrapper.targetTable,
-      cteEnv: {},
-      derivedCounter: { count: 0 },
-    });
-
-    return {
-      sourceTable: lineage.rows[0] ? lineage.rows[0].sourceTable : "未识别",
-      rows: lineage.rows,
-      warnings: lineage.rows.some(function (row) {
-        return row.sourceTable === "未识别";
-      }) ? ["存在部分字段未识别"] : [],
-    };
-  }
-
-  function analyzeSqlLineage(sql, options) {
-    var normalized = stripStatementTail(normalizeSql(sql));
-    if (!normalized) {
-      throw new Error("SQL 为空");
-    }
-
-    var opts = options || {};
-    var standardMap = opts.standardMap || parseStandardDict(opts.standardDictText || "");
-    var location = opts.location || "inline.sql";
-
-    var statements = splitTopLevel(normalized, ";");
-    var allRows = [];
-    var allEdges = [];
-    var rewrittenList = [];
-    var tableEnv = {};
-
-    statements.forEach(function (stmt, idx) {
-      if (!stmt.trim()) {
-        return;
-      }
-      var wrapper = parseCreateTableWrapper(stmt);
-      var target = wrapper.targetTable === "RESULT" ? "RESULT_" + (idx + 1) : wrapper.targetTable;
-      var lineage = analyzeSelectQuery(wrapper.querySql, {
-        targetTable: target,
-        cteEnv: tableEnv,
-        derivedCounter: { count: 0 },
-      });
-
-      allRows = allRows.concat(lineage.rows.map(function (row) {
-        return {
-          index: allRows.length + 1,
-          sourceTable: row.sourceTable,
-          sourceField: row.sourceField,
-          mappedField: row.mappedField,
-          comment: row.comment || "",
-          targetTable: target,
-        };
-      }));
-      allEdges = allEdges.concat(lineage.edges);
-      rewrittenList.push(rewriteSelectSql(stmt, standardMap));
-
-      tableEnv[target] = {
-        outputTable: target,
-        fields: lineage.fields,
-      };
-    });
-
-    var renameReport = buildRenameReport(allRows, standardMap, location);
-
-    return {
-      rows: allRows,
-      lineageEdges: allEdges,
-      rewrittenSql: rewrittenList.join(";\n\n") + (rewrittenList.length ? ";" : ""),
-      renameReport: renameReport,
-      astSummary: {
-        statementCount: statements.length,
-        edgeCount: allEdges.length,
-        fieldCount: allRows.length,
-      },
-      warnings: allRows.length ? [] : ["未识别到可解析字段"],
-    };
+  function rewriteSelectSql(sql) {
+    return normalizeSql(sql);
   }
 
   var api = {

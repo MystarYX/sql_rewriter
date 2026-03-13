@@ -11,12 +11,9 @@
 
   var resultBody = document.getElementById("result-body");
   var lineageBody = document.getElementById("lineage-body");
-  var reportBody = document.getElementById("report-body");
-  var rewrittenSqlEl = document.getElementById("rewritten-sql");
 
   var legacyInput = document.getElementById("legacy-input");
   var standardInput = document.getElementById("standard-input");
-  var dictInput = document.getElementById("dict-input");
   var labels = Array.from(document.querySelectorAll(".label"));
 
   function currentInput() {
@@ -39,10 +36,10 @@
         return [
           "<tr>",
           "<td>" + (idx + 1) + "</td>",
-          "<td>" + (row.sourceTable || "未识别") + "</td>",
-          "<td>" + (row.sourceField || "未识别") + "</td>",
-          "<td>" + (row.mappedField || "未识别") + "</td>",
-          "<td>" + (row.targetTable || "RESULT") + "</td>",
+          "<td>" + (row.sourceTable || "UNRESOLVED") + "</td>",
+          "<td>" + (row.sourceField || "UNRESOLVED") + "</td>",
+          "<td>" + (row.mappedField || "UNRESOLVED") + "</td>",
+          "<td>" + (row.targetTable || "RESULT_1") + "</td>",
           "<td>" + (row.comment || "") + "</td>",
           "</tr>",
         ].join("");
@@ -60,29 +57,10 @@
       .map(function (row) {
         return [
           "<tr>",
-          "<td>" + (row.sourceTable || "未识别") + "</td>",
-          "<td>" + (row.sourceField || "未识别") + "</td>",
-          "<td>" + (row.targetTable || "RESULT") + "</td>",
-          "<td>" + (row.targetField || "未识别") + "</td>",
-          "</tr>",
-        ].join("");
-      })
-      .join("");
-  }
-
-  function renderReport(rows) {
-    if (!rows || !rows.length) {
-      reportBody.innerHTML = '<tr><td colspan="3" class="empty">暂无报告</td></tr>';
-      return;
-    }
-
-    reportBody.innerHTML = rows
-      .map(function (row) {
-        return [
-          "<tr>",
-          "<td>" + row.oldField + "</td>",
-          "<td>" + row.newField + "</td>",
-          "<td>" + row.location + "</td>",
+          "<td>" + (row.sourceTable || "UNRESOLVED") + "</td>",
+          "<td>" + (row.sourceField || "UNRESOLVED") + "</td>",
+          "<td>" + (row.targetTable || "RESULT_1") + "</td>",
+          "<td>" + (row.targetField || "UNRESOLVED") + "</td>",
           "</tr>",
         ].join("");
       })
@@ -92,8 +70,6 @@
   function clearOutputs() {
     renderFieldRows([]);
     renderLineage([]);
-    renderReport([]);
-    rewrittenSqlEl.value = "";
     astSummaryEl.textContent = "AST 摘要：暂无";
   }
 
@@ -111,8 +87,7 @@
 
     labels.forEach(function (label) {
       var forId = label.getAttribute("for");
-      var shouldShow = forId === "dict-input" ||
-        (mode === "legacy" && forId === "legacy-input") ||
+      var shouldShow = (mode === "legacy" && forId === "legacy-input") ||
         (mode === "standard" && forId === "standard-input");
       label.classList.toggle("hidden", !shouldShow);
     });
@@ -125,64 +100,21 @@
     var content = rows.map(function (row, idx) {
       return [
         idx + 1,
-        row.sourceTable || "未识别",
-        row.sourceField || "未识别",
-        row.mappedField || "未识别",
-        row.targetTable || "RESULT",
+        row.sourceTable || "UNRESOLVED",
+        row.sourceField || "UNRESOLVED",
+        row.mappedField || "UNRESOLVED",
+        row.targetTable || "RESULT_1",
         row.comment || "",
       ].join("\t");
     });
     return [header.join("\t")].concat(content).join("\n");
   }
 
-  function runAnalysis(sql, dictText) {
-    if (!window.SQLParser) {
-      throw new Error("解析器未加载，请刷新页面后重试");
+  function runAnalysis(sql) {
+    if (!window.SQLParser || typeof window.SQLParser.analyzeSqlLineage !== "function") {
+      throw new Error("解析器未加载或版本不兼容，请刷新页面");
     }
-
-    if (typeof window.SQLParser.analyzeSqlLineage === "function") {
-      return window.SQLParser.analyzeSqlLineage(sql, {
-        standardDictText: dictText || "",
-        location: activeMode + "_input.sql",
-      });
-    }
-
-    if (typeof window.SQLParser.parseSqlFields === "function") {
-      // Backward-compatible fallback for old parser.js bundles.
-      var basic = window.SQLParser.parseSqlFields(sql);
-      var basicRows = (basic.rows || []).map(function (row, idx) {
-        return {
-          index: idx + 1,
-          sourceTable: row.sourceTable || "未识别",
-          sourceField: row.sourceField || "未识别",
-          mappedField: row.mappedField || "未识别",
-          comment: row.comment || "",
-          targetTable: "RESULT_1",
-        };
-      });
-
-      return {
-        rows: basicRows,
-        lineageEdges: basicRows.map(function (row) {
-          return {
-            sourceTable: row.sourceTable,
-            sourceField: row.sourceField,
-            targetTable: row.targetTable,
-            targetField: row.mappedField,
-          };
-        }),
-        rewrittenSql: "",
-        renameReport: [],
-        astSummary: {
-          statementCount: 1,
-          edgeCount: basicRows.length,
-          fieldCount: basicRows.length,
-        },
-        warnings: ["当前使用旧版解析器，已降级为基础字段解析模式"],
-      };
-    }
-
-    throw new Error("解析器版本不兼容，请重新部署最新代码");
+    return window.SQLParser.analyzeSqlLineage(sql, {});
   }
 
   tabs.forEach(function (tab) {
@@ -200,20 +132,17 @@
         return;
       }
 
-      var result = runAnalysis(sql, dictInput.value || "");
-
+      var result = runAnalysis(sql);
       renderFieldRows(result.rows);
       renderLineage(result.lineageEdges);
-      renderReport(result.renameReport);
-      rewrittenSqlEl.value = result.rewrittenSql || "";
       astSummaryEl.textContent = "AST 摘要：" + JSON.stringify(result.astSummary, null, 2);
 
       if (!result.rows.length) {
         setMessage("解析失败：未提取到字段", "error");
       } else if (result.warnings && result.warnings.length) {
-        setMessage("解析完成（存在部分未识别项）", "error");
+        setMessage("解析完成（存在未识别链路，请查看调试信息）", "error");
       } else {
-        setMessage("解析与重构成功", "success");
+        setMessage("解析成功", "success");
       }
     } catch (error) {
       setMessage("解析失败：" + error.message, "error");
@@ -223,7 +152,6 @@
 
   clearBtn.addEventListener("click", function () {
     currentInput().value = "";
-    dictInput.value = "";
     clearOutputs();
     setMessage("已清空", "success");
   });

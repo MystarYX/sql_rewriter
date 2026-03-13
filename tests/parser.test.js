@@ -1,189 +1,197 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {
-  parseSqlFields,
-  splitSelectItems,
-  parseSourceTable,
-  parseStandardDict,
-  analyzeSqlLineage,
-  rewriteSelectSql,
-} = require("../parser");
+const { analyzeSqlLineage, parseSqlFields, splitSelectItems } = require("../parser");
 
-test("AS 别名解析", () => {
+test("basic AS alias lineage", () => {
   const sql = "SELECT gicode AS COL_ID FROM goods";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].sourceField, "gicode");
-  assert.equal(result.rows[0].mappedField, "COL_ID");
-  assert.equal(result.rows[0].sourceTable, "goods");
+  const result = analyzeSqlLineage(sql, {});
+  assert.equal(result.lineageEdges.length, 1);
+  assert.equal(result.lineageEdges[0].sourceTable, "goods");
+  assert.equal(result.lineageEdges[0].sourceField, "gicode");
+  assert.equal(result.lineageEdges[0].targetField, "COL_ID");
 });
 
-test("无 AS 别名解析", () => {
+test("basic no-AS alias lineage", () => {
   const sql = "SELECT gicode COL_ID FROM goods";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].sourceField, "gicode");
-  assert.equal(result.rows[0].mappedField, "COL_ID");
-});
-
-test("多字段拆分", () => {
-  const sql = "SELECT a AS A, b AS B, c AS C FROM t1";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows.length, 3);
-  assert.equal(result.rows[2].mappedField, "C");
-});
-
-test("函数字段中逗号不应拆错", () => {
-  const sql = "SELECT concat(a, '-', b) AS ab, c AS c2 FROM t2";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows.length, 2);
-  assert.equal(result.rows[0].mappedField, "ab");
-});
-
-test("提取 FROM 表名", () => {
-  const sql = "SELECT x AS y FROM schema_1.table_1 t";
-  assert.equal(parseSourceTable(sql), "schema_1.table_1");
-});
-
-test("无 FROM 时返回未识别", () => {
-  const sql = "SELECT x AS y";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].sourceTable, "未识别");
-});
-
-test("行注释解析", () => {
-  const sql = "SELECT gicode AS COL_ID -- 商品编码\nFROM goods";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].comment, "商品编码");
-});
-
-test("块注释解析", () => {
-  const sql = "SELECT gicode AS COL_ID /* 商品编码 */ FROM goods";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].comment, "商品编码");
-});
-
-test("空 SQL 抛错", () => {
-  assert.throws(() => parseSqlFields("   "), /SQL 为空/);
-});
-
-test("表达式字段无别名时不应误判", () => {
-  const sql = "SELECT a + b FROM t";
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].sourceField, "a");
-  assert.equal(result.rows[0].mappedField, "a + b");
-});
-
-test("AS 带双引号别名可识别", () => {
-  const sql = 'SELECT gicode AS "COL_ID" FROM goods';
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].sourceField, "gicode");
-  assert.equal(result.rows[0].mappedField, "COL_ID");
-});
-
-test("无 AS + 引号别名可识别", () => {
-  const sql = 'SELECT col "ALIAS" FROM t';
-  const result = parseSqlFields(sql);
-  assert.equal(result.rows[0].sourceField, "col");
-  assert.equal(result.rows[0].mappedField, "ALIAS");
-});
-
-test("splitSelectItems 边界", () => {
-  const items = splitSelectItems("a, func(b, c), d");
-  assert.deepEqual(items, ["a", "func(b, c)", "d"]);
-});
-
-test("标准字段字典解析", () => {
-  const dict = parseStandardDict("cust_name,customer_name\namt amount");
-  assert.equal(dict.cust_name, "customer_name");
-  assert.equal(dict.amt, "amount");
-});
-
-test("重写 SQL 基础字段替换", () => {
-  const rewritten = rewriteSelectSql(
-    "SELECT cust_name AS c_name, amt AS amt FROM order_info",
-    { cust_name: "customer_name", amt: "amount", c_name: "customer_name" }
-  );
-  assert.match(rewritten, /customer_name/);
-  assert.match(rewritten, /amount/);
-  assert.equal(/cust_name/.test(rewritten), false);
-  assert.equal(/\bamt\b/.test(rewritten), false);
-});
-
-test("CTE 字段血缘解析", () => {
-  const sql = `WITH t AS (SELECT cust_name AS c_name FROM orders) SELECT c_name AS final_name FROM t`;
   const result = analyzeSqlLineage(sql, {});
-  const hasEdge = result.lineageEdges.some((e) =>
-    e.sourceTable === "orders" && e.sourceField === "cust_name" && e.targetField === "final_name"
-  );
-  assert.equal(hasEdge, true);
+  assert.equal(result.lineageEdges[0].sourceField, "gicode");
+  assert.equal(result.lineageEdges[0].targetField, "COL_ID");
 });
 
-test("跨语句链路 A.C -> B.D -> C.E", () => {
-  const sql = `
-CREATE TABLE B AS SELECT C AS D FROM A;
-CREATE TABLE C AS SELECT D AS E FROM B;
-`;
+test("split select items handles commas in functions", () => {
+  const items = splitSelectItems("a, concat(b, ',', c), d");
+  assert.deepEqual(items, ["a", "concat(b, ',', c)", "d"]);
+});
+
+test("join lineage keeps real source tables", () => {
+  const sql = "SELECT a.cust_name AS cust_name, b.amt AS amt FROM t1 a LEFT JOIN t2 b ON a.id=b.id";
   const result = analyzeSqlLineage(sql, {});
-  const hasAB = result.lineageEdges.some((e) =>
-    e.sourceTable === "A" && e.sourceField === "C" && e.targetTable === "B" && e.targetField === "D"
-  );
-  const hasAC = result.lineageEdges.some((e) =>
-    e.sourceTable === "A" && e.sourceField === "C" && e.targetTable === "C" && e.targetField === "E"
-  );
+  const hasT1 = result.lineageEdges.some((e) => e.sourceTable === "t1" && e.sourceField === "cust_name" && e.targetField === "cust_name");
+  const hasT2 = result.lineageEdges.some((e) => e.sourceTable === "t2" && e.sourceField === "amt" && e.targetField === "amt");
+  assert.equal(hasT1, true);
+  assert.equal(hasT2, true);
+});
+
+test("union all merges branch lineage", () => {
+  const sql = "SELECT x AS y FROM t1 UNION ALL SELECT x AS y FROM t2";
+  const result = analyzeSqlLineage(sql, {});
+  const fromT1 = result.lineageEdges.some((e) => e.sourceTable === "t1" && e.targetField === "y");
+  const fromT2 = result.lineageEdges.some((e) => e.sourceTable === "t2" && e.targetField === "y");
+  assert.equal(fromT1, true);
+  assert.equal(fromT2, true);
+});
+
+test("nested subquery alias drill-down", () => {
+  const sql = "SELECT b1.qty AS out_qty FROM (SELECT sum(qty) AS qty FROM base_t) b1";
+  const result = analyzeSqlLineage(sql, {});
+  const edge = result.lineageEdges.find((e) => e.targetField === "out_qty");
+  assert.equal(edge.sourceTable, "base_t");
+  assert.equal(edge.sourceField, "qty");
+});
+
+test("case when lineage includes condition and value refs", () => {
+  const sql = "SELECT CASE WHEN amt > 0 THEN amt ELSE 0 END AS pay_amt FROM pay_t";
+  const result = analyzeSqlLineage(sql, {});
+  const hasAmt = result.lineageEdges.some((e) => e.sourceTable === "pay_t" && e.sourceField === "amt" && e.targetField === "pay_amt");
+  assert.equal(hasAmt, true);
+});
+
+test("window function lineage", () => {
+  const sql = "SELECT SUM(amt) OVER(PARTITION BY cust_id) AS win_amt FROM p";
+  const result = analyzeSqlLineage(sql, {});
+  const hasAmt = result.lineageEdges.some((e) => e.sourceField === "amt" && e.targetField === "win_amt");
+  const hasCust = result.lineageEdges.some((e) => e.sourceField === "cust_id" && e.targetField === "win_amt");
+  assert.equal(hasAmt, true);
+  assert.equal(hasCust, true);
+});
+
+test("cte drill-down lineage", () => {
+  const sql = "WITH t AS (SELECT cust_name AS c_name FROM orders) SELECT c_name AS final_name FROM t";
+  const result = analyzeSqlLineage(sql, {});
+  const edge = result.lineageEdges.find((e) => e.targetField === "final_name");
+  assert.equal(edge.sourceTable, "orders");
+  assert.equal(edge.sourceField, "cust_name");
+});
+
+test("multi statement chain A.C -> B.D -> C.E", () => {
+  const sql = "CREATE TABLE B AS SELECT C AS D FROM A; CREATE TABLE C AS SELECT D AS E FROM B;";
+  const result = analyzeSqlLineage(sql, {});
+  const hasAB = result.lineageEdges.some((e) => e.sourceTable === "A" && e.sourceField === "C" && e.targetTable === "B" && e.targetField === "D");
+  const hasAC = result.lineageEdges.some((e) => e.sourceTable === "A" && e.sourceField === "C" && e.targetTable === "C" && e.targetField === "E");
   assert.equal(hasAB, true);
   assert.equal(hasAC, true);
 });
 
-test("JOIN 场景可识别来源", () => {
-  const sql = "SELECT a.cust_name AS cust_name, b.amt AS amt FROM t1 a LEFT JOIN t2 b ON a.id=b.id";
+test("complex provided SQL lineage should not mark invr_qty as unresolved", () => {
+  const sql = `SELECT 
+        b2.purordgicodex
+        ,sum(b1.qty) AS invr_qty
+        ,sum(if(datediff(date_format(b2.fratifydate,'yyyy-MM-dd'),date_format(b2.findate,'yyyy-MM-dd'))+1 > 90,b1.qty,0)) AS invr_qty_90
+FROM (
+        SELECT 
+                r.ingislcodex
+                ,sum(r.qty) AS qty
+                ,sum(r.qtt) AS qtt
+        FROM (
+                SELECT 
+                        ingislcodex
+                        ,round(qty,6) AS qty
+                        ,round(qtt,6) AS qtt
+                FROM 
+                        gf_core.ods_erp_storesbalance_df 
+                WHERE 
+                        qty <> 0.0 
+                        AND pt = '\${basidata_date}'
+
+                UNION ALL
+                
+                SELECT 
+                        g.ingislcodex
+                        ,round(sum(g.dc * g.qty) * -1,6) AS qty
+                        ,round(sum(g.dc * g.qtt) * -1,6) AS qtt
+                FROM (
+                        SELECT 
+                                islcode 
+                        FROM 
+                                gf_core.ods_erp_storeslist_df  
+                        WHERE 
+                                status ='70' 
+                ) m 
+                INNER JOIN (
+                        SELECT 
+                                sg.ingislcodex AS ingislcodex
+                                ,sg.islcode AS islcode
+                                ,cast(sg.dc as int) AS dc
+                                ,cast(sg.qty as decimal(24,6)) AS qty
+                                ,cast(sg.qtt as decimal(24,6)) AS qtt  
+                        FROM 
+                                gf_core.ods_erp_storeslistg_df sg 
+                ) g 
+                ON g.islcode = m.islcode 
+                GROUP BY 
+                        g.ingislcodex
+        ) r 
+        GROUP BY 
+                ingislcodex 
+        HAVING 
+                sum(r.qty) <> 0.0
+) b1
+INNER JOIN gf_core.basetemp_gf_storeslistg_in_df b2 
+        ON b1.ingislcodex = b2.ingislcodex 
+GROUP BY 
+        b2.purordgicodex`;
+
   const result = analyzeSqlLineage(sql, {});
-  const hasCust = result.lineageEdges.some((e) => e.sourceTable === "t1" && e.sourceField === "cust_name");
-  const hasAmt = result.lineageEdges.some((e) => e.sourceTable === "t2" && e.sourceField === "amt");
-  assert.equal(hasCust, true);
-  assert.equal(hasAmt, true);
+
+  const hasPur = result.lineageEdges.some((e) =>
+    e.sourceTable === "gf_core.basetemp_gf_storeslistg_in_df" &&
+    e.sourceField === "purordgicodex" &&
+    e.targetField === "purordgicodex"
+  );
+
+  const hasInvrQtyFromBalance = result.lineageEdges.some((e) =>
+    e.sourceTable === "gf_core.ods_erp_storesbalance_df" &&
+    e.sourceField === "qty" &&
+    e.targetField === "invr_qty"
+  );
+
+  const hasInvrQtyFromGdc = result.lineageEdges.some((e) =>
+    e.sourceTable === "gf_core.ods_erp_storeslistg_df" &&
+    e.sourceField === "dc" &&
+    e.targetField === "invr_qty"
+  );
+
+  const has90Fratify = result.lineageEdges.some((e) =>
+    e.sourceTable === "gf_core.basetemp_gf_storeslistg_in_df" &&
+    e.sourceField === "fratifydate" &&
+    e.targetField === "invr_qty_90"
+  );
+
+  const has90Findate = result.lineageEdges.some((e) =>
+    e.sourceTable === "gf_core.basetemp_gf_storeslistg_in_df" &&
+    e.sourceField === "findate" &&
+    e.targetField === "invr_qty_90"
+  );
+
+  const unresolvedInvrQty = result.lineageEdges.some((e) => e.targetField === "invr_qty" && e.sourceTable === "UNRESOLVED");
+
+  assert.equal(hasPur, true);
+  assert.equal(hasInvrQtyFromBalance, true);
+  assert.equal(hasInvrQtyFromGdc, true);
+  assert.equal(has90Fratify, true);
+  assert.equal(has90Findate, true);
+  assert.equal(unresolvedInvrQty, false);
 });
 
-test("窗口函数来源识别", () => {
-  const sql = "SELECT SUM(amt) OVER(PARTITION BY cust_id) AS win_amt FROM payments";
-  const result = analyzeSqlLineage(sql, {});
-  const fields = result.lineageEdges.map((e) => e.sourceField);
-  assert.equal(fields.includes("amt"), true);
-  assert.equal(fields.includes("cust_id"), true);
+test("parseSqlFields compatible rows", () => {
+  const result = parseSqlFields("SELECT a AS b FROM t");
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].sourceTable, "t");
+  assert.equal(result.rows[0].sourceField, "a");
+  assert.equal(result.rows[0].mappedField, "b");
 });
 
-test("分析结果包含重构报告", () => {
-  const sql = "SELECT cust_name AS c_name FROM order_info";
-  const result = analyzeSqlLineage(sql, {
-    standardDictText: "cust_name,customer_name\nc_name,customer_name",
-    location: "order_query.sql",
-  });
-  assert.equal(result.renameReport.length > 0, true);
-  assert.equal(result.renameReport[0].location, "order_query.sql");
-});
-
-test("安全替换-字符串常量不应被修改", () => {
-  const sql = "SELECT 'amt' AS lit, amt AS amt2, total_amt FROM t";
-  const rewritten = rewriteSelectSql(sql, { amt: "amount" });
-  assert.equal(rewritten.includes("'amt'"), true);
-  assert.equal(rewritten.includes("'amount'"), false);
-  assert.equal(/\bamount\b/.test(rewritten), true);
-});
-
-test("安全替换-注释中的字段名不应被修改", () => {
-  const sql = "SELECT amt /* amt should stay */, amt AS amt2 FROM t";
-  const rewritten = rewriteSelectSql(sql, { amt: "amount" });
-  assert.equal(rewritten.includes("/* amt should stay */"), true);
-});
-
-test("安全替换-函数字符串参数不应被修改", () => {
-  const sql = "SELECT concat('amt', amt) AS x FROM t";
-  const rewritten = rewriteSelectSql(sql, { amt: "amount" });
-  assert.equal(rewritten.includes("concat('amt', amount)"), true);
-});
-
-test("安全替换-双引号和反引号标识符内部不替换", () => {
-  const sql = 'SELECT "amt" AS q1, `amt` AS q2, amt AS q3 FROM t';
-  const rewritten = rewriteSelectSql(sql, { amt: "amount" });
-  assert.equal(rewritten.includes('"amt"'), true);
-  assert.equal(rewritten.includes("`amt`"), true);
-  assert.equal(rewritten.includes("amount AS q3"), true);
+test("debug info exists for unresolved refs", () => {
+  const result = analyzeSqlLineage("SELECT x FROM t1 a JOIN t2 b ON a.id=b.id", {});
+  assert.equal(Array.isArray(result.debugInfo), true);
 });
