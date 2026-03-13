@@ -195,3 +195,103 @@ test("debug info exists for unresolved refs", () => {
   const result = analyzeSqlLineage("SELECT x FROM t1 a JOIN t2 b ON a.id=b.id", {});
   assert.equal(Array.isArray(result.debugInfo), true);
 });
+
+test("keyword NOT should not be extracted as lineage field", () => {
+  const sql = "SELECT IF(flag NOT IN ('A','B'), qty, 0) AS out_qty FROM t";
+  const result = analyzeSqlLineage(sql, {});
+  const hasNot = result.lineageEdges.some((e) => e.sourceField.toUpperCase() === "NOT");
+  const hasIn = result.lineageEdges.some((e) => e.sourceField.toUpperCase() === "IN");
+  const hasFlag = result.lineageEdges.some((e) => e.sourceField === "flag" && e.targetField === "out_qty");
+  const hasQty = result.lineageEdges.some((e) => e.sourceField === "qty" && e.targetField === "out_qty");
+  assert.equal(hasNot, false);
+  assert.equal(hasIn, false);
+  assert.equal(hasFlag, true);
+  assert.equal(hasQty, true);
+});
+
+test("no-AS alias expression should not produce self-mapping pseudo lineage", () => {
+  const sql = "SELECT CASE WHEN logt_splr_quot > 0 THEN 1 ELSE 0 END logt_splr_quot_flag FROM base_gt_stock_all_di";
+  const result = analyzeSqlLineage(sql, {});
+  const hasSelf = result.lineageEdges.some((e) =>
+    e.sourceField === "logt_splr_quot_flag" && e.targetField === "logt_splr_quot_flag"
+  );
+  const hasReal = result.lineageEdges.some((e) =>
+    e.sourceField === "logt_splr_quot" && e.targetField === "logt_splr_quot_flag"
+  );
+  assert.equal(hasSelf, false);
+  assert.equal(hasReal, true);
+});
+
+test("base_gt_stock_all_di style metrics and SYS_FUNC classification", () => {
+  const sql = `SELECT
+    SUM(IF(COL_RVTYPE='1',COL_QTY,0)) AS invr_qty,
+    SUM(IF(COL_RVTYPE='1',COL_RCY1,0)) AS invr_rcy1,
+    uuid() AS icode,
+    current_timestamp() AS etl_time
+FROM base_gt_stock_all_di`;
+  const result = analyzeSqlLineage(sql, {});
+
+  const invrQtyFields = result.lineageEdges
+    .filter((e) => e.targetField === "invr_qty")
+    .map((e) => e.sourceField)
+    .sort();
+  const invrRcy1Fields = result.lineageEdges
+    .filter((e) => e.targetField === "invr_rcy1")
+    .map((e) => e.sourceField)
+    .sort();
+  const icodeSource = result.lineageEdges.find((e) => e.targetField === "icode");
+  const etlSource = result.lineageEdges.find((e) => e.targetField === "etl_time");
+
+  assert.deepEqual(invrQtyFields, ["COL_QTY", "COL_RVTYPE"]);
+  assert.deepEqual(invrRcy1Fields, ["COL_RCY1", "COL_RVTYPE"]);
+  assert.equal(icodeSource.sourceTable, "SYS_FUNC");
+  assert.equal(etlSource.sourceTable, "SYS_FUNC");
+});
+
+test("lineage tree and mermaid output exist", () => {
+  const sql = "SELECT a AS x, b AS y FROM t";
+  const result = analyzeSqlLineage(sql, {});
+  assert.equal(Array.isArray(result.lineageTree), true);
+  assert.equal(result.lineageTree.length >= 2, true);
+  assert.equal(/^graph LR/.test(result.mermaid), true);
+  assert.equal(result.mermaid.includes("-->"), true);
+});
+
+test("tight alias max(col)alias should not create self-mapping", () => {
+  const sql = "SELECT max(COL_SCODE_CCODE_QUOTA)logt_splr_quot FROM base_gt_stock_all_di";
+  const result = analyzeSqlLineage(sql, {});
+  const hasReal = result.lineageEdges.some((e) =>
+    e.sourceField === "COL_SCODE_CCODE_QUOTA" && e.targetField === "logt_splr_quot"
+  );
+  const hasSelf = result.lineageEdges.some((e) =>
+    e.sourceField === "logt_splr_quot" && e.targetField === "logt_splr_quot"
+  );
+  assert.equal(hasReal, true);
+  assert.equal(hasSelf, false);
+});
+
+test("tight alias sum(col)alias should not create self-mapping", () => {
+  const sql = "SELECT sum(COL_QTY)invr_qty FROM base_gt_stock_all_di";
+  const result = analyzeSqlLineage(sql, {});
+  const hasReal = result.lineageEdges.some((e) =>
+    e.sourceField === "COL_QTY" && e.targetField === "invr_qty"
+  );
+  const hasSelf = result.lineageEdges.some((e) =>
+    e.sourceField === "invr_qty" && e.targetField === "invr_qty"
+  );
+  assert.equal(hasReal, true);
+  assert.equal(hasSelf, false);
+});
+
+test("tight alias cast(sum(col)...)alias should not create self-mapping", () => {
+  const sql = "SELECT cast(sum(COL_RCY1) as decimal(24,6))invr_rcy1 FROM base_gt_stock_all_di";
+  const result = analyzeSqlLineage(sql, {});
+  const hasReal = result.lineageEdges.some((e) =>
+    e.sourceField === "COL_RCY1" && e.targetField === "invr_rcy1"
+  );
+  const hasSelf = result.lineageEdges.some((e) =>
+    e.sourceField === "invr_rcy1" && e.targetField === "invr_rcy1"
+  );
+  assert.equal(hasReal, true);
+  assert.equal(hasSelf, false);
+});

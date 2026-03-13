@@ -7,6 +7,7 @@
     then: true, else: true, end: true, over: true, partition: true, by: true, group: true,
     order: true, having: true, union: true, all: true, with: true, distinct: true, sum: true,
     count: true, avg: true, min: true, max: true, in: true, is: true, null: true, like: true,
+    not: true, exists: true, between: true,
     cast: true, round: true, if: true, datediff: true, date_format: true, to_date: true,
     int: true, integer: true, bigint: true, decimal: true, double: true, float: true,
     string: true, varchar: true, char: true, boolean: true, date: true, timestamp: true,
@@ -204,6 +205,16 @@
           comment: comment,
         };
       }
+    }
+
+    // Handle tightly-coupled alias pattern like: max(col)alias
+    var tightAlias = expr.match(new RegExp("^([\\s\\S]*\\))(?:\\s*)(" + aliasPattern + ")$"));
+    if (tightAlias) {
+      return {
+        expression: tightAlias[1].trim(),
+        output: normalizeIdentifier(tightAlias[2].trim()),
+        comment: comment,
+      };
     }
 
     var fallback = expr.trim();
@@ -790,7 +801,7 @@
     var edges = [];
     for (var i = 0; i < analysis.columns.length; i += 1) {
       var col = analysis.columns[i];
-      var srcs = col.sources.length ? col.sources : [{ table: "UNRESOLVED", field: col.expression }];
+      var srcs = col.sources.length ? col.sources : classifyFallbackSource(col);
       for (var s = 0; s < srcs.length; s += 1) {
         edges.push({
           sourceTable: srcs[s].table,
@@ -805,6 +816,33 @@
     return edges;
   }
 
+  function isSystemFuncOrConst(expression) {
+    var expr = (expression || "").trim();
+    if (!expr) {
+      return false;
+    }
+    if (/^'.*'$/.test(expr) || /^\".*\"$/.test(expr)) {
+      return true;
+    }
+    if (/^-?\d+(\.\d+)?$/.test(expr)) {
+      return true;
+    }
+    if (/^(null|true|false)$/i.test(expr)) {
+      return true;
+    }
+    if (/^[a-zA-Z_][\w$]*\s*\(/.test(expr)) {
+      return true;
+    }
+    return false;
+  }
+
+  function classifyFallbackSource(col) {
+    if (isSystemFuncOrConst(col.expression)) {
+      return [{ table: "SYS_FUNC", field: col.output }];
+    }
+    return [{ table: "UNRESOLVED", field: col.expression }];
+  }
+
   function dedupeEdges(edges) {
     var seen = {};
     var out = [];
@@ -817,6 +855,74 @@
       }
     }
     return out;
+  }
+
+  function buildTreeRows(edges) {
+    var grouped = {};
+    for (var i = 0; i < edges.length; i += 1) {
+      var e = edges[i];
+      var key = e.targetTable + "::" + e.targetField;
+      if (!grouped[key]) {
+        grouped[key] = {
+          targetTable: e.targetTable,
+          targetField: e.targetField,
+          sources: [],
+        };
+      }
+      grouped[key].sources.push({ table: e.sourceTable, field: e.sourceField });
+    }
+
+    return Object.keys(grouped).map(function (k) {
+      return {
+        targetTable: grouped[k].targetTable,
+        targetField: grouped[k].targetField,
+        sources: dedupeSources(grouped[k].sources),
+      };
+    });
+  }
+
+  function safeNodeId(seed, index) {
+    var base = seed.replace(/[^a-zA-Z0-9_]/g, "_");
+    return base + "_" + index;
+  }
+
+  function buildMermaid(edges) {
+    var lines = ["graph LR"];
+    var nodeMap = {};
+    var nodeIdx = 0;
+    var edgeSeen = {};
+
+    function getNodeId(label, type) {
+      var key = type + "::" + label;
+      if (!nodeMap[key]) {
+        nodeMap[key] = safeNodeId(type, nodeIdx++);
+        lines.push("  " + nodeMap[key] + "[\"" + label.replace(/\"/g, "\\\\\"") + "\"]");
+      }
+      return nodeMap[key];
+    }
+
+    for (var i = 0; i < edges.length; i += 1) {
+      var e = edges[i];
+      var srcLabel = e.sourceTable + "." + e.sourceField;
+      var midLabel = e.targetField;
+      var dstLabel = e.targetTable;
+      var srcId = getNodeId(srcLabel, "src");
+      var midId = getNodeId(midLabel, "mid");
+      var dstId = getNodeId(dstLabel, "dst");
+
+      var edge1 = srcId + "->" + midId;
+      if (!edgeSeen[edge1]) {
+        edgeSeen[edge1] = true;
+        lines.push("  " + srcId + " --> " + midId);
+      }
+      var edge2 = midId + "->" + dstId;
+      if (!edgeSeen[edge2]) {
+        edgeSeen[edge2] = true;
+        lines.push("  " + midId + " --> " + dstId);
+      }
+    }
+
+    return lines.join("\n");
   }
 
   function parseSourceTable(sql) {
@@ -885,6 +991,8 @@
     return {
       rows: rows,
       lineageEdges: allEdges,
+      lineageTree: buildTreeRows(allEdges),
+      mermaid: buildMermaid(allEdges),
       rewrittenSql: "",
       renameReport: [],
       astSummary: {

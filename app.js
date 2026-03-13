@@ -11,6 +11,8 @@
 
   var resultBody = document.getElementById("result-body");
   var lineageBody = document.getElementById("lineage-body");
+  var treeView = document.getElementById("tree-view");
+  var mermaidText = document.getElementById("mermaid-text");
 
   var legacyInput = document.getElementById("legacy-input");
   var standardInput = document.getElementById("standard-input");
@@ -25,52 +27,73 @@
     messageEl.className = "message" + (type ? " " + type : "");
   }
 
+  function clearOutputs() {
+    resultBody.innerHTML = '<tr><td colspan="6" class="empty">暂无结果</td></tr>';
+    lineageBody.innerHTML = '<tr><td colspan="4" class="empty">暂无血缘</td></tr>';
+    treeView.innerHTML = '<div class="tree-empty">暂无图形数据</div>';
+    mermaidText.textContent = "graph LR";
+    astSummaryEl.textContent = "AST 摘要：暂无";
+  }
+
   function renderFieldRows(rows) {
     if (!rows || !rows.length) {
       resultBody.innerHTML = '<tr><td colspan="6" class="empty">暂无结果</td></tr>';
       return;
     }
 
-    resultBody.innerHTML = rows
-      .map(function (row, idx) {
-        return [
-          "<tr>",
-          "<td>" + (idx + 1) + "</td>",
-          "<td>" + (row.sourceTable || "UNRESOLVED") + "</td>",
-          "<td>" + (row.sourceField || "UNRESOLVED") + "</td>",
-          "<td>" + (row.mappedField || "UNRESOLVED") + "</td>",
-          "<td>" + (row.targetTable || "RESULT_1") + "</td>",
-          "<td>" + (row.comment || "") + "</td>",
-          "</tr>",
-        ].join("");
-      })
-      .join("");
+    resultBody.innerHTML = rows.map(function (row, idx) {
+      return [
+        "<tr>",
+        "<td>" + (idx + 1) + "</td>",
+        "<td>" + (row.sourceTable || "UNRESOLVED") + "</td>",
+        "<td>" + (row.sourceField || "UNRESOLVED") + "</td>",
+        "<td>" + (row.mappedField || "UNRESOLVED") + "</td>",
+        "<td>" + (row.targetTable || "RESULT_1") + "</td>",
+        "<td>" + (row.comment || "") + "</td>",
+        "</tr>",
+      ].join("");
+    }).join("");
   }
 
-  function renderLineage(rows) {
-    if (!rows || !rows.length) {
+  function renderLineage(edges) {
+    if (!edges || !edges.length) {
       lineageBody.innerHTML = '<tr><td colspan="4" class="empty">暂无血缘</td></tr>';
       return;
     }
 
-    lineageBody.innerHTML = rows
-      .map(function (row) {
-        return [
-          "<tr>",
-          "<td>" + (row.sourceTable || "UNRESOLVED") + "</td>",
-          "<td>" + (row.sourceField || "UNRESOLVED") + "</td>",
-          "<td>" + (row.targetTable || "RESULT_1") + "</td>",
-          "<td>" + (row.targetField || "UNRESOLVED") + "</td>",
-          "</tr>",
-        ].join("");
-      })
-      .join("");
+    lineageBody.innerHTML = edges.map(function (e) {
+      return [
+        "<tr>",
+        "<td>" + (e.sourceTable || "UNRESOLVED") + "</td>",
+        "<td>" + (e.sourceField || "UNRESOLVED") + "</td>",
+        "<td>" + (e.targetTable || "RESULT_1") + "</td>",
+        "<td>" + (e.targetField || "UNRESOLVED") + "</td>",
+        "</tr>",
+      ].join("");
+    }).join("");
   }
 
-  function clearOutputs() {
-    renderFieldRows([]);
-    renderLineage([]);
-    astSummaryEl.textContent = "AST 摘要：暂无";
+  function renderTree(rows) {
+    if (!rows || !rows.length) {
+      treeView.innerHTML = '<div class="tree-empty">暂无图形数据</div>';
+      return;
+    }
+
+    treeView.innerHTML = rows.map(function (row) {
+      var sourceHtml = row.sources.map(function (s) {
+        return '<span class="tree-node source">' + s.table + "." + s.field + "</span>";
+      }).join('<span class="tree-join"> + </span>');
+
+      return [
+        '<div class="tree-row">',
+        '<div class="tree-col">' + sourceHtml + '</div>',
+        '<div class="tree-arrow">→</div>',
+        '<div class="tree-col"><span class="tree-node target">' + row.targetField + '</span></div>',
+        '<div class="tree-arrow">→</div>',
+        '<div class="tree-col"><span class="tree-node result">' + row.targetTable + '</span></div>',
+        '</div>',
+      ].join("");
+    }).join("");
   }
 
   function switchMode(mode) {
@@ -112,7 +135,7 @@
 
   function runAnalysis(sql) {
     if (!window.SQLParser || typeof window.SQLParser.analyzeSqlLineage !== "function") {
-      throw new Error("解析器未加载或版本不兼容，请刷新页面");
+      throw new Error("parser not loaded or incompatible");
     }
     return window.SQLParser.analyzeSqlLineage(sql, {});
   }
@@ -135,12 +158,14 @@
       var result = runAnalysis(sql);
       renderFieldRows(result.rows);
       renderLineage(result.lineageEdges);
+      renderTree(result.lineageTree || []);
+      mermaidText.textContent = result.mermaid || "graph LR";
       astSummaryEl.textContent = "AST 摘要：" + JSON.stringify(result.astSummary, null, 2);
 
       if (!result.rows.length) {
         setMessage("解析失败：未提取到字段", "error");
       } else if (result.warnings && result.warnings.length) {
-        setMessage("解析完成（存在未识别链路，请查看调试信息）", "error");
+        setMessage("解析完成（存在未识别链路）", "error");
       } else {
         setMessage("解析成功", "success");
       }
