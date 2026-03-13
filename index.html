@@ -1,16 +1,16 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>基础版 SQL 字段分析工具</title>
+  <title>SQL 字段血缘解析与标准化重构工具</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <main class="container">
     <header class="header">
-      <h1>SQL 字段分析工具（V1）</h1>
-      <p>用于快速提取 SQL 字段映射关系，减少逐行阅读成本。</p>
+      <h1>SQL 字段血缘解析 + 标准字段替换（V2）</h1>
+      <p>支持字段血缘追踪、标准字段映射重写、映射报告导出。</p>
     </header>
 
     <section class="panel">
@@ -19,38 +19,88 @@
         <button class="tab" data-mode="standard" role="tab" aria-selected="false">标准代码分析</button>
       </div>
 
-      <div class="editor-wrap">
-        <label for="legacy-input" class="label">旧代码 SQL</label>
-        <textarea id="legacy-input" class="sql-input active" placeholder="示例：SELECT gicode AS COL_ID FROM goods;"></textarea>
+      <div class="editor-grid">
+        <div>
+          <label for="legacy-input" class="label">旧代码 SQL</label>
+          <textarea id="legacy-input" class="sql-input active" placeholder="示例：WITH t AS (...) SELECT ..."></textarea>
 
-        <label for="standard-input" class="label hidden">标准代码 SQL</label>
-        <textarea id="standard-input" class="sql-input" placeholder="示例：SELECT gicode COL_ID FROM dim_goods;"></textarea>
+          <label for="standard-input" class="label hidden">标准代码 SQL</label>
+          <textarea id="standard-input" class="sql-input" placeholder="示例：SELECT cust_name AS c_name FROM order_info"></textarea>
+        </div>
+        <div>
+          <label for="dict-input" class="label">标准字段字典（每行：旧字段,新字段）</label>
+          <textarea id="dict-input" class="dict-input" placeholder="cust_name,customer_name&#10;amt,amount&#10;dt,trade_date"></textarea>
+        </div>
       </div>
 
       <div class="btn-row">
-        <button id="parse-btn" class="btn primary">解析</button>
+        <button id="parse-btn" class="btn primary">解析并重构</button>
         <button id="clear-btn" class="btn">清空</button>
-        <button id="copy-btn" class="btn">复制结果</button>
+        <button id="copy-btn" class="btn">复制字段映射</button>
       </div>
 
       <p id="message" class="message" aria-live="polite"></p>
+      <pre id="ast-summary" class="ast-summary">AST 摘要：暂无</pre>
     </section>
 
     <section class="panel result-panel">
-      <h2>解析结果</h2>
+      <h2>字段映射清单</h2>
       <div class="table-wrap">
-        <table id="result-table">
+        <table>
           <thead>
             <tr>
               <th>序号</th>
               <th>来源表</th>
               <th>原始字段</th>
               <th>映射字段</th>
+              <th>目标表</th>
               <th>注释</th>
             </tr>
           </thead>
           <tbody id="result-body">
-            <tr><td colspan="5" class="empty">暂无结果</td></tr>
+            <tr><td colspan="6" class="empty">暂无结果</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel result-panel">
+      <h2>字段血缘关系</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>源表</th>
+              <th>源字段</th>
+              <th>目标表</th>
+              <th>目标字段</th>
+            </tr>
+          </thead>
+          <tbody id="lineage-body">
+            <tr><td colspan="4" class="empty">暂无血缘</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel result-panel">
+      <h2>标准化 SQL</h2>
+      <textarea id="rewritten-sql" class="output-sql" readonly placeholder="重构后的 SQL 会显示在这里"></textarea>
+    </section>
+
+    <section class="panel result-panel">
+      <h2>字段重构报告</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>旧字段</th>
+              <th>新字段</th>
+              <th>SQL位置</th>
+            </tr>
+          </thead>
+          <tbody id="report-body">
+            <tr><td colspan="3" class="empty">暂无报告</td></tr>
           </tbody>
         </table>
       </div>

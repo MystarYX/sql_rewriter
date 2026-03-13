@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   "use strict";
 
   var activeMode = "legacy";
@@ -7,9 +7,16 @@
   var clearBtn = document.getElementById("clear-btn");
   var copyBtn = document.getElementById("copy-btn");
   var messageEl = document.getElementById("message");
+  var astSummaryEl = document.getElementById("ast-summary");
+
   var resultBody = document.getElementById("result-body");
+  var lineageBody = document.getElementById("lineage-body");
+  var reportBody = document.getElementById("report-body");
+  var rewrittenSqlEl = document.getElementById("rewritten-sql");
+
   var legacyInput = document.getElementById("legacy-input");
   var standardInput = document.getElementById("standard-input");
+  var dictInput = document.getElementById("dict-input");
   var labels = Array.from(document.querySelectorAll(".label"));
 
   function currentInput() {
@@ -21,27 +28,73 @@
     messageEl.className = "message" + (type ? " " + type : "");
   }
 
-  function renderRows(rows) {
+  function renderFieldRows(rows) {
     if (!rows || !rows.length) {
-      resultBody.innerHTML = '<tr><td colspan="5" class="empty">暂无结果</td></tr>';
+      resultBody.innerHTML = '<tr><td colspan="6" class="empty">暂无结果</td></tr>';
       return;
     }
 
-    var html = rows
-      .map(function (row) {
+    resultBody.innerHTML = rows
+      .map(function (row, idx) {
         return [
           "<tr>",
-          "<td>" + row.index + "</td>",
+          "<td>" + (idx + 1) + "</td>",
           "<td>" + (row.sourceTable || "未识别") + "</td>",
           "<td>" + (row.sourceField || "未识别") + "</td>",
           "<td>" + (row.mappedField || "未识别") + "</td>",
+          "<td>" + (row.targetTable || "RESULT") + "</td>",
           "<td>" + (row.comment || "") + "</td>",
           "</tr>",
         ].join("");
       })
       .join("");
+  }
 
-    resultBody.innerHTML = html;
+  function renderLineage(rows) {
+    if (!rows || !rows.length) {
+      lineageBody.innerHTML = '<tr><td colspan="4" class="empty">暂无血缘</td></tr>';
+      return;
+    }
+
+    lineageBody.innerHTML = rows
+      .map(function (row) {
+        return [
+          "<tr>",
+          "<td>" + (row.sourceTable || "未识别") + "</td>",
+          "<td>" + (row.sourceField || "未识别") + "</td>",
+          "<td>" + (row.targetTable || "RESULT") + "</td>",
+          "<td>" + (row.targetField || "未识别") + "</td>",
+          "</tr>",
+        ].join("");
+      })
+      .join("");
+  }
+
+  function renderReport(rows) {
+    if (!rows || !rows.length) {
+      reportBody.innerHTML = '<tr><td colspan="3" class="empty">暂无报告</td></tr>';
+      return;
+    }
+
+    reportBody.innerHTML = rows
+      .map(function (row) {
+        return [
+          "<tr>",
+          "<td>" + row.oldField + "</td>",
+          "<td>" + row.newField + "</td>",
+          "<td>" + row.location + "</td>",
+          "</tr>",
+        ].join("");
+      })
+      .join("");
+  }
+
+  function clearOutputs() {
+    renderFieldRows([]);
+    renderLineage([]);
+    renderReport([]);
+    rewrittenSqlEl.value = "";
+    astSummaryEl.textContent = "AST 摘要：暂无";
   }
 
   function switchMode(mode) {
@@ -58,7 +111,8 @@
 
     labels.forEach(function (label) {
       var forId = label.getAttribute("for");
-      var shouldShow = (mode === "legacy" && forId === "legacy-input") ||
+      var shouldShow = forId === "dict-input" ||
+        (mode === "legacy" && forId === "legacy-input") ||
         (mode === "standard" && forId === "standard-input");
       label.classList.toggle("hidden", !shouldShow);
     });
@@ -67,9 +121,16 @@
   }
 
   function toTsv(rows) {
-    var header = ["序号", "来源表", "原始字段", "映射字段", "注释"];
-    var content = rows.map(function (row) {
-      return [row.index, row.sourceTable, row.sourceField, row.mappedField, row.comment || ""].join("\t");
+    var header = ["序号", "来源表", "原始字段", "映射字段", "目标表", "注释"];
+    var content = rows.map(function (row, idx) {
+      return [
+        idx + 1,
+        row.sourceTable || "未识别",
+        row.sourceField || "未识别",
+        row.mappedField || "未识别",
+        row.targetTable || "RESULT",
+        row.comment || "",
+      ].join("\t");
     });
     return [header.join("\t")].concat(content).join("\n");
   }
@@ -85,31 +146,38 @@
       var sql = currentInput().value;
       if (!sql || !sql.trim()) {
         setMessage("请输入 SQL 后再解析", "error");
-        renderRows([]);
+        clearOutputs();
         return;
       }
 
-      var parsed = window.SQLParser.parseSqlFields(sql);
-      if (!parsed.rows.length) {
+      var result = window.SQLParser.analyzeSqlLineage(sql, {
+        standardDictText: dictInput.value || "",
+        location: activeMode + "_input.sql",
+      });
+
+      renderFieldRows(result.rows);
+      renderLineage(result.lineageEdges);
+      renderReport(result.renameReport);
+      rewrittenSqlEl.value = result.rewrittenSql || "";
+      astSummaryEl.textContent = "AST 摘要：" + JSON.stringify(result.astSummary, null, 2);
+
+      if (!result.rows.length) {
         setMessage("解析失败：未提取到字段", "error");
-        renderRows([]);
-        return;
+      } else if (result.warnings && result.warnings.length) {
+        setMessage("解析完成（存在部分未识别项）", "error");
+      } else {
+        setMessage("解析与重构成功", "success");
       }
-
-      renderRows(parsed.rows);
-      var tip = parsed.warnings.length
-        ? "解析完成（部分字段未识别）"
-        : "解析成功";
-      setMessage(tip, "success");
     } catch (error) {
       setMessage("解析失败：" + error.message, "error");
-      renderRows([]);
+      clearOutputs();
     }
   });
 
   clearBtn.addEventListener("click", function () {
     currentInput().value = "";
-    renderRows([]);
+    dictInput.value = "";
+    clearOutputs();
     setMessage("已清空", "success");
   });
 
@@ -118,15 +186,15 @@
       var rows = Array.from(resultBody.querySelectorAll("tr"))
         .map(function (tr) {
           var tds = Array.from(tr.querySelectorAll("td"));
-          if (tds.length !== 5) {
+          if (tds.length !== 6) {
             return null;
           }
           return {
-            index: tds[0].textContent,
             sourceTable: tds[1].textContent,
             sourceField: tds[2].textContent,
             mappedField: tds[3].textContent,
-            comment: tds[4].textContent,
+            targetTable: tds[4].textContent,
+            comment: tds[5].textContent,
           };
         })
         .filter(Boolean);
@@ -137,7 +205,7 @@
       }
 
       await navigator.clipboard.writeText(toTsv(rows));
-      setMessage("结果已复制到剪贴板", "success");
+      setMessage("字段映射已复制", "success");
     } catch (error) {
       setMessage("复制失败：" + error.message, "error");
     }
