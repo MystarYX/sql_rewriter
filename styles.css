@@ -189,6 +189,11 @@ th {
   margin-right: 8px;
 }
 
+.toggle-wrap.inline {
+  margin-right: 0;
+  margin-left: 4px;
+}
+
 .mini-btn {
   border: 1px solid #c6cfdf;
   background: #fff;
@@ -231,6 +236,17 @@ th {
   padding: 12px 8px;
 }
 
+.graph-columns-dynamic {
+  grid-auto-rows: min-content;
+  align-items: start;
+}
+
+.dynamic-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .graph-col h3 {
   margin: 0 0 10px;
   font-size: 14px;
@@ -258,6 +274,10 @@ th {
   padding: 10px;
 }
 
+.lineage-card {
+  min-height: 140px;
+}
+
 .source-card-head {
   display: flex;
   gap: 8px;
@@ -265,12 +285,21 @@ th {
 }
 
 .source-field-list {
-  overflow: auto;
-  max-height: 174px;
+  overflow: visible;
+  max-height: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding-right: 4px;
+}
+
+.field-pill {
+  width: 100%;
+  cursor: pointer;
+}
+
+.field-pill.graph-node.field {
+  padding: 7px 9px;
 }
 
 .source-field {
@@ -287,6 +316,30 @@ th {
   font-size: 12px;
   text-align: center;
   cursor: pointer;
+}
+
+.expr-card {
+  cursor: default;
+}
+
+.expr-preview {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drag-handle {
+  cursor: move;
+  user-select: none;
+}
+
+.expr-handle {
+  font-size: 11px;
+  color: #7c5a0b;
+  margin-bottom: 6px;
 }
 
 .expr-col,
@@ -450,10 +503,6 @@ th {
     min-width: 1320px;
     min-height: 500px;
   }
-  .graph-columns {
-    grid-template-columns: 420px 440px 380px;
-    gap: 32px;
-    min-height: 500px;
-  }
+  .graph-columns { gap: 32px; min-height: 500px; }
   .graph-node { font-size: 12px; }
 }

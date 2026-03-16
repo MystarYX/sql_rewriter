@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -29,6 +29,10 @@
         <button id="parse-btn" class="btn primary">解析重构</button>
         <button id="clear-btn" class="btn">清空</button>
         <button id="copy-btn" class="btn">复制字段映射</button>
+        <label class="toggle-wrap inline">
+          <input id="loose-mode-toggle" type="checkbox" checked />
+          宽松模式（未限定字段回填主表别名）
+        </label>
       </div>
 
       <p id="message" class="message" aria-live="polite"></p>
@@ -92,3 +96,4 @@
   <script src="./app.js?v=20260316a"></script>
 </body>
 </html>
+

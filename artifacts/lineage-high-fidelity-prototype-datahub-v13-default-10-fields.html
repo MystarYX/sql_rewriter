@@ -1,0 +1,441 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lineage Prototype V13 - Dynamic Levels + Default 10 Fields</title>
+  <style>
+    :root{--bg:#f4f7fb;--panel:#fff;--line:#d8e2ef;--text:#1f2d3d;--muted:#6a7f93;--edge:#95a8be;--hi:#2f76bd;--dash:#7f9bb8;--src:#f4f9ff;--sub:#f7f4ff;--exp:#fff8ef;--dst:#eefaf2}
+    *{box-sizing:border-box}body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:radial-gradient(circle at 20% 10%,#ebf2ff 0,transparent 35%),radial-gradient(circle at 80% 20%,#ecfff5 0,transparent 30%),var(--bg);color:var(--text)}
+    .page{max-width:100vw;margin:14px auto;padding:0 14px 16px}.head{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 8px 22px rgba(20,35,55,.08);display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between;align-items:center}
+    .title{font-size:22px;font-weight:700}.chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.chip{border:1px solid #cde0f4;background:#f4f9ff;color:#31506d;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600}
+    .toggle{display:inline-flex;align-items:center;gap:7px;border:1px solid #cde0f4;background:#f7fbff;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600}.toggle input{accent-color:#2f76bd}
+    .canvas{position:relative;min-height:1200px;margin-top:14px;background:#f8fbff;border:1px dashed #d3e0ee;border-radius:16px;overflow:auto;box-shadow:0 8px 22px rgba(20,35,55,.08)}
+    .inner{position:relative;min-width:max-content;padding:58px 20px 24px 20px}.lane{position:absolute;top:10px;border:1px solid #d2dfed;background:#f5f9ff;color:#53708c;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700}
+    #edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+    .cols{position:relative;display:flex;gap:52px;align-items:flex-start}
+    .col{width:460px;position:relative;min-height:420px;padding-top:44px}
+    .col-title{position:absolute;top:0;left:0;border:1px solid #d2dfed;background:#f5f9ff;color:#53708c;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;display:inline-block;max-width:max-content}
+    .col .card{position:absolute;left:0;right:0}
+    .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 14px rgba(15,35,60,.05);overflow:hidden;transition:.15s}.card.active{border-color:#8bb4dd;box-shadow:0 10px 20px rgba(47,118,189,.18)}.card.dim{opacity:.35}
+    .hd{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;cursor:grab;user-select:none}.meta{font-size:11px;color:var(--muted);margin-bottom:2px}.name{font-size:15px;font-weight:700;line-height:1.3;word-break:break-all}.act{font-size:12px;color:#5e7d97;font-weight:600}
+    .card.dragging{z-index:20}.card.dragging .hd{cursor:grabbing}
+    .src .hd{background:linear-gradient(90deg,var(--src),#fff)}.sub .hd{background:linear-gradient(90deg,var(--sub),#fff)}.expr .hd{background:linear-gradient(90deg,var(--exp),#fff)}.dst .hd{background:linear-gradient(90deg,var(--dst),#fff)}
+    .body{display:flex;flex-direction:column;height:324px}.rows{flex:1;overflow:auto}.row{padding:11px 13px;border-bottom:1px solid #edf2f7;font-family:Consolas,"Courier New",monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+    .row.src{background:linear-gradient(90deg,#f6faff,#fff)}.row.sub{background:linear-gradient(90deg,#faf8ff,#fff)}.row.expr{background:linear-gradient(90deg,#fffaf1,#fff)}.row.dst{background:linear-gradient(90deg,#f1fbf4,#fff)}
+    .row.hidden-extra{display:none}.card.expanded .row.hidden-extra{display:block}.row.active{outline:2px solid #8cb5dd;outline-offset:-2px;background:#e9f3ff;z-index:1}.row.dim{opacity:.28}
+    .anchor{border-top:1px dashed #c8d7e8;background:#eef3fa;color:#476786;font-size:13px;font-weight:700;padding:9px 12px;cursor:pointer}
+    .pill{display:inline-block;margin-left:7px;font-size:10px;border-radius:999px;padding:1px 7px;border:1px solid;vertical-align:1px;font-family:"Segoe UI",Arial,sans-serif}
+    .p-src{border-color:#bfd6f3;background:#f4f9ff;color:#2e5d8b}.p-sub{border-color:#d4c9f4;background:#f7f4ff;color:#5a4c8f}.p-exp{border-color:#efcea0;background:#fff8ef;color:#885f27}.p-dst{border-color:#bfe2cb;background:#eefaf2;color:#245f42}
+    .edge{fill:none;stroke:var(--edge);stroke-width:1.2;opacity:.72}.edge.dashed{stroke:var(--dash);stroke-dasharray:6 4;opacity:.56}.edge.active{stroke:var(--hi);stroke-width:2.25;opacity:1}.edge.dim{opacity:.09}
+    .tt{position:fixed;z-index:20;width:520px;max-width:calc(100vw - 16px);background:#1f2530;color:#eaf0fa;border:1px solid #5d738d;border-radius:8px;box-shadow:0 10px 24px rgba(0,0,0,.28);display:none}
+    .tt-hd{padding:8px 10px;border-bottom:1px solid #42566f;display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700}.tt-body{padding:10px;max-height:220px;overflow:auto;font-family:Consolas,"Courier New",monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-all}
+    .copy-btn{border:1px solid #6f8fb0;background:#3f4f61;color:#e7eef8;border-radius:4px;font-size:11px;padding:2px 8px;cursor:pointer}.copy-tip{margin-left:8px;font-size:11px;color:#8ce4a0;display:none}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="head">
+      <div class="title">Lineage Prototype V13 - Dynamic Levels (Default 10 Fields)</div>
+      <div class="chips">
+        <span class="chip">Based on your CTE + INSERT OVERWRITE SQL</span>
+        <span class="chip">Column count is computed from lineage DAG</span>
+        <span class="chip">Each level is rendered in its own column</span>
+        <span class="chip">Default 10 fields per card, rest in Other fields</span>
+        <label class="toggle"><input id="toggle-lineage" type="checkbox" checked />Show up/downstream</label>
+      </div>
+    </div>
+    <div class="canvas" id="canvas"><div class="inner" id="inner"><svg id="edges"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#95a8be"></path></marker><marker id="arrowHi" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2f76bd"></path></marker></defs></svg><div class="cols" id="cols"></div></div></div>
+  </div>
+  <div id="tt" class="tt"><div class="tt-hd"><span>Full Expression</span><span><button id="copy-btn" class="copy-btn">Copy</button><span id="copy-tip" class="copy-tip">Copied</span></span></div><div id="tt-body" class="tt-body"></div></div>
+  <script>
+  (function(){
+    var cards=[
+      {id:"src_pur",kind:"src",meta:"Source table | alias pur",name:"dwd_lift_ctrtpurtrad_gt_purctrtgoodsdtal_erpn8_df",fields:[
+        ["pur_pur_ctrt_gicode","pur.pur_ctrt_gicode"],["pur_pur_ctrt_gicodex","pur.pur_ctrt_gicodex"],["pur_pur_ctrt_icode","pur.pur_ctrt_icode"],["pur_pur_ctrt_icodex","pur.pur_ctrt_icodex"],
+        ["pur_m_pur_ctrt_code","pur.m_pur_ctrt_code"],["pur_prjt_code","pur.prjt_code"],["pur_prjt_icode","pur.prjt_icode"],["pur_m_ori_ratify_date","pur.m_ori_ratify_date",1],
+        ["pur_m_busi_mode","pur.m_busi_mode",1],["pur_m_busi_mode_name","pur.m_busi_mode_name",1],["pur_m_busi_org","pur.m_busi_org",1],["pur_m_busi_org_name","pur.m_busi_org_name",1],
+        ["pur_m_acnt_org","pur.m_acnt_org",1],["pur_m_acnt_org_name","pur.m_acnt_org_name",1],["pur_gcode","pur.gcode"],["pur_gcode_name","pur.gcode_name",1],
+        ["pur_qtc","pur.qtc"],["pur_rcy2","pur.rcy2",1],["pur_m_fcst_dlvr_date","pur.m_fcst_dlvr_date",1],["pur_m_mana_org","pur.m_mana_org"],["pur_m_mana_org_name","pur.m_mana_org_name",1]
+      ]},
+      {id:"src_mas",kind:"src",meta:"Source table | alias mas",name:"conf_lift_gt_goodstype_mapping_masd_df",fields:[
+        ["mas_srce_sys_gcode","mas.srce_sys_gcode"],["mas_bi_levl1_gcode_type_code","mas.bi_levl1_gcode_type_code"],["mas_bi_levl1_gcode_type_name","mas.bi_levl1_gcode_type_name"]
+      ]},
+      {id:"src_par_base",kind:"src",meta:"Source table for subquery | par",name:"gf_core.dwd_lift_logtstock_gt_purarrvnotigoodsdtal_erpn8_df",fields:[
+        ["par_src_pur_ctrt_gicodex","pur_ctrt_gicodex"],["par_src_ext_vssl","ext_vssl"]
+      ]},
+      {id:"src_iow_base",kind:"src",meta:"Source table for subquery | iow",name:"gf_core.dwd_lift_logtstock_gt_iowhrtrcgoodsdtal_erpn8_df",fields:[
+        ["iow_src_pur_ctrt_gicodex","pur_ctrt_gicodex"],["iow_src_iowh_dc","iowh_dc"],["iow_src_qty","qty"],["iow_src_m_iowh_date","m_iowh_date"]
+      ]},
+      {id:"src_trl_base",kind:"src",meta:"Source table for subquery | trl",name:"gf_core.dwd_lift_ctrt_gt_pursalrlt_erpn8_df",fields:[
+        ["trl_src_pur_ctrt_icode","pur_ctrt_icode"],["trl_src_splr_trcl","splr_trcl"],["trl_src_splr_trcl_name","splr_trcl_name"],["trl_src_cust_trcl","cust_trcl"],["trl_src_cust_trcl_name","cust_trcl_name"],
+        ["trl_src_splr_trcl_sers","splr_trcl_sers"],["trl_src_splr_trcl_sers_name","splr_trcl_sers_name"],["trl_src_cust_trcl_sers","cust_trcl_sers"],["trl_src_cust_trcl_sers_name","cust_trcl_sers_name"]
+      ]},
+      {id:"src_sys",kind:"src",meta:"System function",name:"SYS_FUNC",fields:[
+        ["sys_current_timestamp","current_timestamp()"]
+      ]},
+
+      {id:"src_sb",kind:"src",meta:"CTE source table | alias sb",name:"gf_core.ods_erp_storesbalance_df",fields:[
+        ["src_sb_ingislcodex","sb.ingislcodex"],["src_sb_qty","sb.qty"],["src_sb_qtt","sb.qtt"]
+      ]},
+      {id:"src_sl",kind:"src",meta:"CTE source table | alias sl",name:"gf_core.ods_erp_storeslist_df",fields:[
+        ["src_sl_islcode","sl.islcode"],["src_sl_status","sl.status",1],["src_sl_ratifydate","sl.ratifydate",1]
+      ]},
+      {id:"src_sg",kind:"src",meta:"CTE source table | alias sg",name:"gf_core.ods_erp_storeslistg_df",fields:[
+        ["src_sg_ingislcodex","sg.ingislcodex"],["src_sg_islcode","sg.islcode"],["src_sg_dc","sg.dc"],["src_sg_qty","sg.qty"],["src_sg_qtt","sg.qtt"]
+      ]},
+      {id:"src_b2_cte",kind:"src",meta:"CTE source table | alias b2",name:"gf_core.basetemp_gf_storeslistg_in_df",fields:[
+        ["src_b2_ingislcodex","b2.ingislcodex"],["src_b2_purordgicodex","b2.purordgicodex"],["src_b2_fratifydate","b2.fratifydate"],["src_b2_findate","b2.findate"]
+      ]},
+
+      {id:"m",kind:"sub",meta:"CTE subquery alias table",name:"m",fields:[["m_islcode","sl.islcode AS islcode"]]},
+      {id:"g",kind:"sub",meta:"CTE subquery alias table",name:"g",fields:[["g_ingislcodex","sg.ingislcodex AS ingislcodex"],["g_islcode","sg.islcode AS islcode"],["g_dc","cast(sg.dc as int) AS dc"],["g_qty","cast(sg.qty as decimal(24,6)) AS qty"],["g_qtt","cast(sg.qtt as decimal(24,6)) AS qtt"]]},
+      {id:"br1",kind:"sub",meta:"CTE UNION branch #1 (no SQL alias)",name:"branch#1 (no alias)",fields:[["br1_ingislcodex","ingislcodex AS ingislcodex"],["br1_qty","round(qty,6) AS qty"],["br1_qtt","round(qtt,6) AS qtt",1]]},
+      {id:"br2",kind:"sub",meta:"CTE UNION branch #2 (no SQL alias)",name:"branch#2 (no alias)",fields:[["br2_join_on","ON g.islcode = m.islcode"],["br2_ingislcodex","g.ingislcodex AS ingislcodex"],["br2_qty","round(sum(g.dc * g.qty) * -1, 6) AS qty"],["br2_qtt","round(sum(g.dc * g.qtt) * -1, 6) AS qtt",1]]},
+      {id:"r",kind:"sub",meta:"CTE subquery alias table",name:"r",fields:[["r_ingislcodex","ingislcodex AS ingislcodex"],["r_qty","sum(r.qty) AS qty"],["r_qtt","sum(r.qtt) AS qtt",1]]},
+      {id:"b1",kind:"sub",meta:"CTE outer derived alias",name:"b1",fields:[["b1_ingislcodex","r.ingislcodex AS ingislcodex"],["b1_qty","sum(r.qty) AS qty"]]},
+      {id:"b2",kind:"sub",meta:"CTE outer join alias",name:"b2",fields:[["b2_ingislcodex","b2.ingislcodex"],["b2_purordgicodex","b2.purordgicodex"],["b2_fratifydate","b2.fratifydate"],["b2_findate","b2.findate"]]},
+      {id:"temp",kind:"sub",meta:"CTE output alias table",name:"temp_imptbusiecctsttn",fields:[["temp_purordgicodex","b2.purordgicodex AS purordgicodex"],["temp_invr_qty","sum(b1.qty) AS invr_qty"],["temp_invr_qty_90","sum(if(datediff(...), b1.qty, 0)) AS invr_qty_90"]]},
+
+      {id:"par",kind:"sub",meta:"LEFT JOIN subquery alias",name:"par",fields:[["par_pur_ctrt_gicodex","pur_ctrt_gicodex"],["par_vssl","concat_ws(',',sort_array(collect_set(ext_vssl))) AS vssl"]]},
+      {id:"iow",kind:"sub",meta:"LEFT JOIN subquery alias",name:"iow",fields:[["iow_pur_ctrt_gicodex","pur_ctrt_gicodex"],["iow_alrd_arrv_qty","sum(case when iowh_dc='1' then iowh_dc*qty else 0 end)"],["iow_dspa_qty","sum(case when iowh_dc='-1' then iowh_dc*qty else 0 end)"],["iow_dspa_qty_15","sum(case when iowh_dc='-1' and date range then iowh_dc*qty else 0 end)",1]]},
+      {id:"trl",kind:"sub",meta:"LEFT JOIN subquery alias",name:"trl",fields:[["trl_pur_ctrt_icode","pur_ctrt_icode"],["trl_splr_trcl","collect_set(splr_trcl)"],["trl_splr_trcl_name","collect_set(splr_trcl_name)",1],["trl_cust_trcl","collect_set(cust_trcl)"],["trl_cust_trcl_name","collect_set(cust_trcl_name)",1],["trl_splr_trcl_sers","collect_set(splr_trcl_sers)",1],["trl_splr_trcl_sers_name","collect_set(splr_trcl_sers_name)",1],["trl_cust_trcl_sers","collect_set(cust_trcl_sers)",1],["trl_cust_trcl_sers_name","collect_set(cust_trcl_sers_name)",1]]},
+
+      {id:"expr",kind:"expr",meta:"Final SELECT before AS",name:"SELECT expressions",fields:[
+        ["expr_pur_ctrt_gicode","pur.pur_ctrt_gicode","","pur.pur_ctrt_gicode"],["expr_pur_ctrt_gicodex","pur.pur_ctrt_gicodex","","pur.pur_ctrt_gicodex"],["expr_pur_ctrt_icode","pur.pur_ctrt_icode",1,"pur.pur_ctrt_icode"],["expr_pur_ctrt_icodex","pur.pur_ctrt_icodex",1,"pur.pur_ctrt_icodex"],
+        ["expr_m_pur_ctrt_code","pur.m_pur_ctrt_code",1,"pur.m_pur_ctrt_code"],["expr_prjt_code","pur.prjt_code",1,"pur.prjt_code"],["expr_prjt_icode","pur.prjt_icode",1,"pur.prjt_icode"],["expr_m_ori_ratify_date","pur.m_ori_ratify_date",1,"pur.m_ori_ratify_date"],
+        ["expr_m_busi_mode","pur.m_busi_mode",1,"pur.m_busi_mode"],["expr_m_busi_mode_name","pur.m_busi_mode_name",1,"pur.m_busi_mode_name"],["expr_m_busi_org","pur.m_busi_org",1,"pur.m_busi_org"],["expr_m_busi_org_name","pur.m_busi_org_name",1,"pur.m_busi_org_name"],
+        ["expr_m_acnt_org","pur.m_acnt_org",1,"pur.m_acnt_org"],["expr_m_acnt_org_name","pur.m_acnt_org_name",1,"pur.m_acnt_org_name"],["expr_gcode","pur.gcode",1,"pur.gcode"],["expr_gcode_name","pur.gcode_name",1,"pur.gcode_name"],
+        ["expr_bi_levl1_gcode_type_code","mas.bi_levl1_gcode_type_code",1,"mas.bi_levl1_gcode_type_code"],["expr_bi_levl1_gcode_type_name","mas.bi_levl1_gcode_type_name",1,"mas.bi_levl1_gcode_type_name"],["expr_qtc","pur.qtc",1,"pur.qtc"],["expr_rcy2","pur.rcy2",1,"pur.rcy2"],
+        ["expr_m_fcst_dlvr_date","pur.m_fcst_dlvr_date",1,"pur.m_fcst_dlvr_date"],["expr_vssl","par.vssl",1,"par.vssl"],["expr_alrd_arrv_qty","iow.alrd_arrv_qty",1,"iow.alrd_arrv_qty"],["expr_non_arrv_qty","pur.qtc - iow.alrd_arrv_qty",1,"pur.qtc - iow.alrd_arrv_qty"],
+        ["expr_dspa_qty","abs(iow.dspa_qty)",1,"abs(iow.dspa_qty)"],["expr_dspa_qty_15","abs(iow.dspa_qty_15)",1,"abs(iow.dspa_qty_15)"],["expr_invr_qty","temp.invr_qty",1,"temp.invr_qty"],["expr_invr_qty_90","temp.invr_qty_90",1,"temp.invr_qty_90"],
+        ["expr_ecct_qty","nvl(pur.qtc,0)-abs(nvl(iow.dspa_qty,0))",1,"nvl(pur.qtc,0)-abs(nvl(iow.dspa_qty,0))"],["expr_etl_time","current_timestamp()",1,"current_timestamp()"],["expr_mana_org","pur.m_mana_org",1,"pur.m_mana_org"],["expr_mana_org_name","pur.m_mana_org_name",1,"pur.m_mana_org_name"],
+        ["expr_splr_trcl","trl.splr_trcl",1,"trl.splr_trcl"],["expr_splr_trcl_name","trl.splr_trcl_name",1,"trl.splr_trcl_name"],["expr_cust_trcl","trl.cust_trcl",1,"trl.cust_trcl"],["expr_cust_trcl_name","trl.cust_trcl_name",1,"trl.cust_trcl_name"],
+        ["expr_splr_trcl_sers","trl.splr_trcl_sers",1,"trl.splr_trcl_sers"],["expr_splr_trcl_sers_name","trl.splr_trcl_sers_name",1,"trl.splr_trcl_sers_name"],["expr_cust_trcl_sers","trl.cust_trcl_sers",1,"trl.cust_trcl_sers"],["expr_cust_trcl_sers_name","trl.cust_trcl_sers_name",1,"trl.cust_trcl_sers_name"]
+      ]},
+      {id:"dst",kind:"dst",meta:"Result table",name:"ads_lift_gt_imptbusiecctsttn_df",fields:[
+        ["dst_pur_ctrt_gicode","pur_ctrt_gicode"],["dst_pur_ctrt_gicodex","pur_ctrt_gicodex"],["dst_pur_ctrt_icode","pur_ctrt_icode"],["dst_pur_ctrt_icodex","pur_ctrt_icodex"],
+        ["dst_m_pur_ctrt_code","m_pur_ctrt_code"],["dst_prjt_code","prjt_code"],["dst_prjt_icode","prjt_icode"],["dst_m_ori_ratify_date","m_ori_ratify_date"],
+        ["dst_m_busi_mode","m_busi_mode"],["dst_m_busi_mode_name","m_busi_mode_name"],["dst_m_busi_org","m_busi_org"],["dst_m_busi_org_name","m_busi_org_name"],
+        ["dst_m_acnt_org","m_acnt_org"],["dst_m_acnt_org_name","m_acnt_org_name"],["dst_gcode","gcode"],["dst_gcode_name","gcode_name"],
+        ["dst_bi_levl1_gcode_type_code","bi_levl1_gcode_type_code"],["dst_bi_levl1_gcode_type_name","bi_levl1_gcode_type_name"],["dst_qtc","qtc"],["dst_rcy2","rcy2"],
+        ["dst_m_fcst_dlvr_date","m_fcst_dlvr_date"],["dst_vssl","vssl"],["dst_alrd_arrv_qty","alrd_arrv_qty"],["dst_non_arrv_qty","non_arrv_qty"],
+        ["dst_dspa_qty","dspa_qty"],["dst_dspa_qty_15","dspa_qty_15"],["dst_invr_qty","invr_qty"],["dst_invr_qty_90","invr_qty_90"],
+        ["dst_ecct_qty","ecct_qty"],["dst_etl_time","etl_time"],["dst_mana_org","mana_org"],["dst_mana_org_name","mana_org_name"],
+        ["dst_splr_trcl","splr_trcl"],["dst_splr_trcl_name","splr_trcl_name"],["dst_cust_trcl","cust_trcl"],["dst_cust_trcl_name","cust_trcl_name"],
+        ["dst_splr_trcl_sers","splr_trcl_sers"],["dst_splr_trcl_sers_name","splr_trcl_sers_name"],["dst_cust_trcl_sers","cust_trcl_sers"],["dst_cust_trcl_sers_name","cust_trcl_sers_name"]
+      ]}
+    ];
+    var edges=[
+      ["src_sl_islcode","m_islcode",1],["src_sg_ingislcodex","g_ingislcodex"],["src_sg_islcode","g_islcode",1],["src_sg_dc","g_dc"],["src_sg_qty","g_qty"],["src_sg_qtt","g_qtt"],
+      ["src_sb_ingislcodex","br1_ingislcodex"],["src_sb_qty","br1_qty"],["src_sb_qtt","br1_qtt"],
+      ["m_islcode","br2_join_on",1],["g_islcode","br2_join_on",1],["g_ingislcodex","br2_ingislcodex"],["g_dc","br2_qty",1],["g_qty","br2_qty",1],["g_dc","br2_qtt"],["g_qtt","br2_qtt"],["br2_join_on","br2_qty",1],["br2_join_on","br2_qtt"],
+      ["br1_ingislcodex","r_ingislcodex"],["br2_ingislcodex","r_ingislcodex"],["br1_qty","r_qty"],["br2_qty","r_qty"],["br1_qtt","r_qtt"],["br2_qtt","r_qtt"],
+      ["r_ingislcodex","b1_ingislcodex"],["r_qty","b1_qty"],
+      ["src_b2_ingislcodex","b2_ingislcodex"],["src_b2_purordgicodex","b2_purordgicodex"],["src_b2_fratifydate","b2_fratifydate"],["src_b2_findate","b2_findate"],
+      ["b2_purordgicodex","temp_purordgicodex"],["b1_qty","temp_invr_qty"],["b1_qty","temp_invr_qty_90",1],["b2_fratifydate","temp_invr_qty_90",1],["b2_findate","temp_invr_qty_90",1],
+
+      ["par_src_pur_ctrt_gicodex","par_pur_ctrt_gicodex"],["par_src_ext_vssl","par_vssl"],
+      ["iow_src_pur_ctrt_gicodex","iow_pur_ctrt_gicodex"],["iow_src_iowh_dc","iow_alrd_arrv_qty"],["iow_src_qty","iow_alrd_arrv_qty"],["iow_src_iowh_dc","iow_dspa_qty"],["iow_src_qty","iow_dspa_qty"],["iow_src_iowh_dc","iow_dspa_qty_15"],["iow_src_qty","iow_dspa_qty_15"],["iow_src_m_iowh_date","iow_dspa_qty_15"],
+      ["trl_src_pur_ctrt_icode","trl_pur_ctrt_icode"],["trl_src_splr_trcl","trl_splr_trcl"],["trl_src_splr_trcl_name","trl_splr_trcl_name"],["trl_src_cust_trcl","trl_cust_trcl"],["trl_src_cust_trcl_name","trl_cust_trcl_name"],["trl_src_splr_trcl_sers","trl_splr_trcl_sers"],["trl_src_splr_trcl_sers_name","trl_splr_trcl_sers_name"],["trl_src_cust_trcl_sers","trl_cust_trcl_sers"],["trl_src_cust_trcl_sers_name","trl_cust_trcl_sers_name"],
+
+      ["pur_pur_ctrt_gicode","expr_pur_ctrt_gicode"],["pur_pur_ctrt_gicodex","expr_pur_ctrt_gicodex"],["pur_pur_ctrt_icode","expr_pur_ctrt_icode"],["pur_pur_ctrt_icodex","expr_pur_ctrt_icodex"],["pur_m_pur_ctrt_code","expr_m_pur_ctrt_code"],
+      ["pur_prjt_code","expr_prjt_code"],["pur_prjt_icode","expr_prjt_icode"],["pur_m_ori_ratify_date","expr_m_ori_ratify_date"],["pur_m_busi_mode","expr_m_busi_mode"],["pur_m_busi_mode_name","expr_m_busi_mode_name"],
+      ["pur_m_busi_org","expr_m_busi_org"],["pur_m_busi_org_name","expr_m_busi_org_name"],["pur_m_acnt_org","expr_m_acnt_org"],["pur_m_acnt_org_name","expr_m_acnt_org_name"],["pur_gcode","expr_gcode"],["pur_gcode_name","expr_gcode_name"],
+      ["mas_bi_levl1_gcode_type_code","expr_bi_levl1_gcode_type_code"],["mas_bi_levl1_gcode_type_name","expr_bi_levl1_gcode_type_name"],
+      ["pur_qtc","expr_qtc"],["pur_rcy2","expr_rcy2"],["pur_m_fcst_dlvr_date","expr_m_fcst_dlvr_date"],["par_vssl","expr_vssl"],["iow_alrd_arrv_qty","expr_alrd_arrv_qty"],["pur_qtc","expr_non_arrv_qty"],["iow_alrd_arrv_qty","expr_non_arrv_qty"],
+      ["iow_dspa_qty","expr_dspa_qty"],["iow_dspa_qty_15","expr_dspa_qty_15"],["temp_invr_qty","expr_invr_qty"],["temp_invr_qty_90","expr_invr_qty_90"],["pur_qtc","expr_ecct_qty"],["iow_dspa_qty","expr_ecct_qty"],["sys_current_timestamp","expr_etl_time"],
+      ["pur_m_mana_org","expr_mana_org"],["pur_m_mana_org_name","expr_mana_org_name"],
+      ["trl_splr_trcl","expr_splr_trcl"],["trl_splr_trcl_name","expr_splr_trcl_name"],["trl_cust_trcl","expr_cust_trcl"],["trl_cust_trcl_name","expr_cust_trcl_name"],["trl_splr_trcl_sers","expr_splr_trcl_sers"],["trl_splr_trcl_sers_name","expr_splr_trcl_sers_name"],["trl_cust_trcl_sers","expr_cust_trcl_sers"],["trl_cust_trcl_sers_name","expr_cust_trcl_sers_name"],
+
+      ["expr_pur_ctrt_gicode","dst_pur_ctrt_gicode"],["expr_pur_ctrt_gicodex","dst_pur_ctrt_gicodex"],["expr_pur_ctrt_icode","dst_pur_ctrt_icode"],["expr_pur_ctrt_icodex","dst_pur_ctrt_icodex"],
+      ["expr_m_pur_ctrt_code","dst_m_pur_ctrt_code"],["expr_prjt_code","dst_prjt_code"],["expr_prjt_icode","dst_prjt_icode"],["expr_m_ori_ratify_date","dst_m_ori_ratify_date"],
+      ["expr_m_busi_mode","dst_m_busi_mode"],["expr_m_busi_mode_name","dst_m_busi_mode_name"],["expr_m_busi_org","dst_m_busi_org"],["expr_m_busi_org_name","dst_m_busi_org_name"],
+      ["expr_m_acnt_org","dst_m_acnt_org"],["expr_m_acnt_org_name","dst_m_acnt_org_name"],["expr_gcode","dst_gcode"],["expr_gcode_name","dst_gcode_name"],
+      ["expr_bi_levl1_gcode_type_code","dst_bi_levl1_gcode_type_code"],["expr_bi_levl1_gcode_type_name","dst_bi_levl1_gcode_type_name"],["expr_qtc","dst_qtc"],["expr_rcy2","dst_rcy2"],
+      ["expr_m_fcst_dlvr_date","dst_m_fcst_dlvr_date"],["expr_vssl","dst_vssl"],["expr_alrd_arrv_qty","dst_alrd_arrv_qty"],["expr_non_arrv_qty","dst_non_arrv_qty"],
+      ["expr_dspa_qty","dst_dspa_qty"],["expr_dspa_qty_15","dst_dspa_qty_15"],["expr_invr_qty","dst_invr_qty"],["expr_invr_qty_90","dst_invr_qty_90"],
+      ["expr_ecct_qty","dst_ecct_qty"],["expr_etl_time","dst_etl_time"],["expr_mana_org","dst_mana_org"],["expr_mana_org_name","dst_mana_org_name"],
+      ["expr_splr_trcl","dst_splr_trcl"],["expr_splr_trcl_name","dst_splr_trcl_name"],["expr_cust_trcl","dst_cust_trcl"],["expr_cust_trcl_name","dst_cust_trcl_name"],
+      ["expr_splr_trcl_sers","dst_splr_trcl_sers"],["expr_splr_trcl_sers_name","dst_splr_trcl_sers_name"],["expr_cust_trcl_sers","dst_cust_trcl_sers"],["expr_cust_trcl_sers_name","dst_cust_trcl_sers_name"]
+    ];
+    var nodeCard={},allNodes=[];cards.forEach(function(c){c.fields.forEach(function(f){nodeCard[f[0]]=c.id;allNodes.push(f[0]);});});
+    function levels(){
+      // Use card-level DAG depth (not field-level depth) to avoid WITH/CTE output cards
+      // being shifted by internal field ordering noise.
+      var cIn={},cOut={},cLv={};
+      cards.forEach(function(c){ cIn[c.id]=0; cOut[c.id]=[]; cLv[c.id]=0; });
+      edges.forEach(function(e){
+        var p=nodeCard[e[0]], n=nodeCard[e[1]];
+        if(!p||!n||p===n) return;
+        cOut[p].push(n);
+        cIn[n]=(cIn[n]||0)+1;
+      });
+
+      var q=[];
+      Object.keys(cIn).forEach(function(cid){ if(!cIn[cid]) q.push(cid); });
+      while(q.length){
+        var x=q.shift();
+        (cOut[x]||[]).forEach(function(n){
+          cLv[n]=Math.max(cLv[n],cLv[x]+1);
+          cIn[n]-=1;
+          if(!cIn[n]) q.push(n);
+        });
+      }
+
+      var maxCore=0;
+      cards.forEach(function(c){
+        if(c.kind!=="expr"&&c.kind!=="dst"){
+          maxCore=Math.max(maxCore,cLv[c.id]||0);
+        }
+      });
+      cards.forEach(function(c){ if(c.kind==="expr"){ cLv[c.id]=Math.max(cLv[c.id]||0,maxCore+1); } });
+      cards.forEach(function(c){ if(c.kind==="dst"){ cLv[c.id]=Math.max(cLv[c.id]||0,maxCore+2); } });
+
+      // Compress sparse levels (e.g. 0,1,3,4...) into contiguous columns.
+      var uniq = Array.from(new Set(Object.keys(cLv).map(function(k){ return cLv[k]; }))).sort(function(a,b){ return a-b; });
+      var dense = {};
+      uniq.forEach(function(v, idx){ dense[v]=idx; });
+      Object.keys(cLv).forEach(function(k){ cLv[k]=dense[cLv[k]]; });
+
+      return cLv;
+    }
+    var cLv=levels(),maxLv=Math.max.apply(null,Object.values(cLv)),cols=document.getElementById("cols"),inner=document.getElementById("inner"),svg=document.getElementById("edges"),canvas=document.getElementById("canvas");
+    var DEFAULT_VISIBLE_FIELDS = 10;
+    var COL_WIDTH=460, COL_GAP=52, COL_STEP=COL_WIDTH+COL_GAP, LANE_START=36;
+    var rawIndex={}; cards.forEach(function(c,i){ rawIndex[c.id]=i; });
+    var cardParents={};
+    edges.forEach(function(e){
+      var p=nodeCard[e[0]], c=nodeCard[e[1]];
+      if(!p||!c||p===c) return;
+      if(!cardParents[c]) cardParents[c]=new Set();
+      cardParents[c].add(p);
+    });
+
+    var levelOrder={}, cardOrderIndex={};
+    function parentScore(cardId){
+      var ps = cardParents[cardId] ? Array.from(cardParents[cardId]) : [];
+      var usable = ps.filter(function(pid){ return cardOrderIndex[pid] !== undefined; });
+      if(!usable.length) return 1000000 + (rawIndex[cardId] || 0);
+      var sum=0; usable.forEach(function(pid){ sum += cardOrderIndex[pid]; });
+      return sum / usable.length;
+    }
+
+    for(var lv=0;lv<=maxLv;lv++){
+      var levelCards = cards.filter(function(c){ return cLv[c.id]===lv; }).slice();
+      if(lv>0){
+        levelCards.sort(function(a,b){
+          var sa = parentScore(a.id), sb = parentScore(b.id);
+          if(sa!==sb) return sa-sb;
+          return (rawIndex[a.id]||0) - (rawIndex[b.id]||0);
+        });
+      }
+      levelOrder[lv]=levelCards;
+      levelCards.forEach(function(c,idx){ cardOrderIndex[c.id]=idx; });
+    }
+
+    for(var i=0;i<=maxLv;i++){
+      var lc=document.createElement("div");
+      lc.className="lane";
+      lc.style.left=(LANE_START+i*COL_STEP)+"px";
+      lc.textContent="L"+i;
+      inner.appendChild(lc);
+    }
+
+    for(var lv=0;lv<=maxLv;lv++){
+      var col=document.createElement("section");
+      col.className="col";
+      col.setAttribute("data-level",lv);
+      var t=document.createElement("div");
+      t.className="col-title";
+      t.textContent="Level "+lv;
+      col.appendChild(t);
+      levelOrder[lv].forEach(function(c){
+        var h='<article class="card '+c.kind+'" id="card_'+c.id+'"><div class="hd"><div><div class="meta">'+esc(c.meta)+'</div><div class="name">'+esc(c.name)+'</div></div><div class="act">Show</div></div><div class="body"><div class="rows">';
+        var hidden=0;
+        c.fields.forEach(function(f, fieldIdx){
+          var hideByDefault = fieldIdx >= DEFAULT_VISIBLE_FIELDS;
+          var hiddenFlag = !!f[2] || hideByDefault;
+          if(hiddenFlag) hidden++;
+          var k=c.kind==="expr"?"expr":c.kind;
+          var full=f[3]||f[1];
+          h+='<div class="row '+k+(hiddenFlag?' hidden-extra':'')+'" data-node-id="'+esc(f[0])+'" data-full-expr="'+esc(full)+'">'+esc(f[1])+(c.kind==="src"?'<span class="pill p-src">field</span>':c.kind==="sub"?'<span class="pill p-sub">derived</span>':c.kind==="expr"?'<span class="pill p-exp">expr</span>':'<span class="pill p-dst">loaded</span>')+'</div>';
+        });
+        h+='</div><div class="anchor" data-card-id="card_'+c.id+'">Other fields (+'+hidden+')</div></div></article>';
+        col.insertAdjacentHTML("beforeend",h);
+      });
+      cols.appendChild(col);
+    }
+    function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
+    var selected="",on=document.getElementById("toggle-lineage"),rows=[].slice.call(document.querySelectorAll(".row")),cardsEl=[].slice.call(document.querySelectorAll(".card")),anchors=[].slice.call(document.querySelectorAll(".anchor"));
+    var LEVEL_TOP=52, LEVEL_GAP=34;
+    var cardPos={};
+    var manualOffsets={};
+    var dragState=null;
+
+    function layoutLevel(lv){
+      var colEl = cols.querySelector('section.col[data-level="'+lv+'"]');
+      if(!colEl) return 0;
+      var items=(levelOrder[lv]||[]).map(function(c){
+        return { id:c.id, el:document.getElementById("card_"+c.id) };
+      }).filter(function(x){ return !!x.el; });
+
+      var cursor=LEVEL_TOP;
+      if(lv===0){
+        items.forEach(function(it){
+          var h=it.el.offsetHeight||320;
+          it.el.style.top=Math.round(cursor)+"px";
+          cardPos[it.id]={top:cursor,height:h};
+          cursor += h + LEVEL_GAP;
+        });
+      }else{
+        items.forEach(function(it,idx){
+          var h=it.el.offsetHeight||320;
+          var ps = cardParents[it.id] ? Array.from(cardParents[it.id]) : [];
+          var centers = ps.map(function(pid){
+            var p=cardPos[pid];
+            return p ? (p.top + p.height/2) : null;
+          }).filter(function(v){ return v!==null; });
+          var desired = centers.length
+            ? (centers.reduce(function(a,b){ return a+b; },0)/centers.length - h/2)
+            : (LEVEL_TOP + idx*20);
+          it._h=h;
+          it._desired=desired;
+        });
+
+        items.sort(function(a,b){
+          if(a._desired!==b._desired) return a._desired-b._desired;
+          return (rawIndex[a.id]||0)-(rawIndex[b.id]||0);
+        });
+
+        items.forEach(function(it){
+          var top=Math.max(cursor,it._desired);
+          it.el.style.top=Math.round(top)+"px";
+          cardPos[it.id]={top:top,height:it._h};
+          cursor = top + it._h + LEVEL_GAP;
+        });
+      }
+
+      var colHeight=Math.max(cursor+20,430);
+      colEl.style.height=colHeight+"px";
+      return colHeight;
+    }
+
+    function layoutCards(){
+      cardPos={};
+      var maxBottom=0;
+      for(var lv=0; lv<=maxLv; lv++){
+        maxBottom=Math.max(maxBottom, layoutLevel(lv));
+      }
+      cardsEl.forEach(function(card){
+        var cid=card.id.replace(/^card_/,"");
+        var p=manualOffsets[cid] || {x:0,y:0};
+        card.style.transform="translate("+p.x+"px,"+p.y+"px)";
+      });
+      inner.style.height=Math.max(maxBottom+40,980)+"px";
+    }
+
+    function bindCardDrag(){
+      cardsEl.forEach(function(card){
+        var hd=card.querySelector(".hd");
+        if(!hd) return;
+        hd.style.touchAction="none";
+        hd.addEventListener("pointerdown", function(ev){
+          if(ev.button!==0) return;
+          var cid=card.id.replace(/^card_/,"");
+          var base=manualOffsets[cid] || {x:0,y:0};
+          dragState={
+            id:cid,
+            card:card,
+            startX:ev.clientX,
+            startY:ev.clientY,
+            baseX:base.x,
+            baseY:base.y
+          };
+          card.classList.add("dragging");
+          document.body.style.userSelect="none";
+          ev.preventDefault();
+        });
+      });
+
+      function stopDrag(){
+        if(!dragState) return;
+        dragState.card.classList.remove("dragging");
+        dragState=null;
+        document.body.style.userSelect="";
+        sch();
+      }
+
+      document.addEventListener("pointermove", function(ev){
+        if(!dragState) return;
+        var dx=ev.clientX-dragState.startX;
+        var dy=ev.clientY-dragState.startY;
+        manualOffsets[dragState.id]={x:dragState.baseX+dx,y:dragState.baseY+dy};
+        dragState.card.style.transform="translate("+manualOffsets[dragState.id].x+"px,"+manualOffsets[dragState.id].y+"px)";
+        sch();
+      });
+      document.addEventListener("pointerup", stopDrag);
+      document.addEventListener("pointercancel", stopDrag);
+    }
+
+    bindCardDrag();
+    var next={},prev={};edges.forEach(function(e){(next[e[0]]||(next[e[0]]=[])).push(e[1]);(prev[e[1]]||(prev[e[1]]=[])).push(e[0]);});
+    var outCount={},inCount={},outRank={},inRank={},outSeen={},inSeen={};
+    edges.forEach(function(e){ outCount[e[0]]=(outCount[e[0]]||0)+1; inCount[e[1]]=(inCount[e[1]]||0)+1; });
+    edges.forEach(function(e,idx){
+      var k=e[0]+"->"+e[1]+"#"+idx;
+      var oi=outSeen[e[0]]||0, ii=inSeen[e[1]]||0;
+      outSeen[e[0]]=oi+1; inSeen[e[1]]=ii+1;
+      outRank[k]=oi; inRank[k]=ii;
+    });
+    function bfs(s,g){var q=[s],seen=new Set([s]);while(q.length){var x=q.shift();(g[x]||[]).forEach(function(n){if(!seen.has(n)){seen.add(n);q.push(n);}});}return seen;}
+    function css(v){return String(v).replace(/\\/g,"\\\\").replace(/"/g,'\\"');}
+    function inView(el,list){if(!el)return 0;if(el.classList.contains("anchor"))return 1;if(el.offsetParent===null)return 0;var r=el.getBoundingClientRect(),c=list.getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom;}
+    function path(a,b,base,so,eo){
+      var sx=a.right-base.left+canvas.scrollLeft+2;
+      var sy=a.top-base.top+a.height/2+canvas.scrollTop+(so||0);
+      var ex=b.left-base.left+canvas.scrollLeft-4;
+      var ey=b.top-base.top+b.height/2+canvas.scrollTop+(eo||0);
+      var dx=ex-sx;
+      var pull=Math.max(72,dx*.42);
+      var c1=sx+pull,c2=ex-pull;
+      return "M"+sx+","+sy+" C"+c1+","+sy+" "+c2+","+ey+" "+ex+","+ey;
+    }
+    var lineMeta=[],tick=0;
+    function draw(){
+      var defs=svg.querySelector("defs").outerHTML,parts=[defs],base=canvas.getBoundingClientRect();
+      lineMeta=[];
+      edges.forEach(function(e,idx){
+        var a=document.querySelector('.row[data-node-id="'+css(e[0])+'"]'),b=document.querySelector('.row[data-node-id="'+css(e[1])+'"]');
+        if(!a||!b)return;
+        var dash=0;
+        if(!inView(a,a.parentElement)){a=a.closest(".card").querySelector(".anchor");dash=1;}
+        if(!inView(b,b.parentElement)){b=b.closest(".card").querySelector(".anchor");dash=1;}
+        if(!a||!b)return;
+        var k=e[0]+"->"+e[1]+"#"+idx;
+        var so=((outRank[k]||0)-((outCount[e[0]]||1)-1)/2)*4;
+        var eo=((inRank[k]||0)-((inCount[e[1]]||1)-1)/2)*4;
+        parts.push('<path class="edge'+(dash?' dashed':'')+'" d="'+path(a.getBoundingClientRect(),b.getBoundingClientRect(),base,so,eo)+'" marker-end="'+(e[2]?'url(#arrowHi)':'url(#arrow)')+'"></path>');
+        lineMeta.push([e[0],e[1]]);
+      });
+      svg.innerHTML=parts.join("");
+      paint();
+    }
+    function sch(){if(tick)return;tick=1;requestAnimationFrame(function(){tick=0;draw();});}
+    function paint(){var hi=new Set(),eHi=new Set(),paths=[].slice.call(svg.querySelectorAll("path.edge"));rows.forEach(function(r){r.classList.remove("active","dim");});cardsEl.forEach(function(c){c.classList.remove("active","dim");});paths.forEach(function(p){p.classList.remove("active","dim");});if(!selected)return;if(on.checked){var up=bfs(selected,prev),down=bfs(selected,next);up.forEach(function(v){hi.add(v);});down.forEach(function(v){hi.add(v);});edges.forEach(function(e){if(hi.has(e[0])&&hi.has(e[1]))eHi.add(e[0]+"->"+e[1]);});rows.forEach(function(r){(hi.has(r.dataset.nodeId)?r.classList.add("active"):r.classList.add("dim"));});cardsEl.forEach(function(c){var a=0;c.querySelectorAll(".row").forEach(function(r){if(r.classList.contains("active"))a=1;});a?c.classList.add("active"):c.classList.add("dim");});paths.forEach(function(p,i){var m=lineMeta[i];if(!m)return;(eHi.has(m[0]+"->"+m[1])?p.classList.add("active"):p.classList.add("dim"));});}else{rows.forEach(function(r){if(r.dataset.nodeId===selected){r.classList.add("active");r.closest(".card").classList.add("active");}});}}
+    anchors.forEach(function(a){a.onclick=function(e){e.stopPropagation();var c=document.getElementById(a.dataset.cardId);c.classList.toggle("expanded");var h=c.querySelectorAll(".row.hidden-extra").length;a.textContent=c.classList.contains("expanded")?"Collapse fields":"Other fields (+"+h+")";layoutCards();sch();};});
+    rows.forEach(function(r){r.onclick=function(e){e.stopPropagation();selected=(selected===r.dataset.nodeId)?"":r.dataset.nodeId;paint();};});
+    document.getElementById("inner").onclick=function(e){if(!e.target.closest(".row")){selected="";paint();}};
+    on.onchange=function(){paint();};[].slice.call(document.querySelectorAll(".rows")).forEach(function(l){l.addEventListener("scroll",sch,{passive:1});});canvas.addEventListener("scroll",sch,{passive:1});window.addEventListener("resize",function(){layoutCards();sch();});
+    var tt=document.getElementById("tt"),tb=document.getElementById("tt-body"),copy=document.getElementById("copy-btn"),tip=document.getElementById("copy-tip"),timer=0,hide=0,pin=0,text="";
+    function show(row){text=row.dataset.fullExpr||row.textContent||"";tb.textContent=text;tip.style.display="none";tt.style.display="block";var r=row.getBoundingClientRect(),t=tt.getBoundingClientRect(),l=Math.max(10,Math.min(r.left+r.width/2-t.width/2,innerWidth-t.width-10)),top=r.top-t.height-10;if(top<10)top=r.bottom+10;tt.style.left=l+"px";tt.style.top=top+"px";}
+    function hideTT(force){clearTimeout(timer);clearTimeout(hide);if(force){tt.style.display="none";pin=0;return;}hide=setTimeout(function(){if(!pin)tt.style.display="none";},130);}
+    [].slice.call(document.querySelectorAll(".row.expr")).forEach(function(r){r.onmouseenter=function(){clearTimeout(hide);timer=setTimeout(function(){show(r);},420);};r.onmouseleave=function(){hideTT(0);};});
+    tt.onmouseenter=function(){pin=1;clearTimeout(hide);};tt.onmouseleave=function(){pin=0;hideTT(0);};copy.onclick=function(e){e.stopPropagation();navigator.clipboard.writeText(text||"").then(function(){tip.style.display="inline";setTimeout(function(){tip.style.display="none";},1200);});};
+    window.addEventListener("load",function(){layoutCards();sch();selected="expr_invr_qty_90";paint();});
+  })();
+  </script>
+</body>
+</html>
+

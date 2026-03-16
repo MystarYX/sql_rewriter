@@ -387,3 +387,106 @@ test("insert overwrite with leading whitespace should still parse target table",
   assert.equal(result.rows.length > 0, true);
   assert.equal(result.rows.every((r) => r.targetTable === "ads_leading_ws_target"), true);
 });
+
+test("left semi join derived source should keep alias lineage", () => {
+  const sql = `SELECT m.corpbcode
+FROM (
+  SELECT pur.corpbcode AS corpbcode
+  FROM (SELECT corpbcode, ccode FROM t_pur) pur
+  LEFT SEMI JOIN (SELECT ccode FROM t_ccode) t1
+    ON t1.ccode = pur.ccode
+) m`;
+  const result = analyzeSqlLineage(sql, {});
+  const hit = result.lineageEdges.find((e) => e.targetField === "corpbcode");
+  assert.equal(hit.sourceTable, "t_pur");
+  assert.equal(hit.sourceField, "corpbcode");
+  assert.equal(
+    result.lineageEdges.some((e) => e.targetField === "corpbcode" && e.sourceTable === "UNRESOLVED"),
+    false
+  );
+});
+
+test("derived source with tight alias )a should be parsed", () => {
+  const sql = "SELECT x.id AS out_id FROM (SELECT id FROM base_t)x";
+  const result = analyzeSqlLineage(sql, {});
+  const edge = result.lineageEdges.find((e) => e.targetField === "out_id");
+  assert.equal(edge.sourceTable, "base_t");
+  assert.equal(edge.sourceField, "id");
+});
+
+test("loose mode should fallback unqualified field to primary alias, not fixed m", () => {
+  const sql = "SELECT ori AS out_ori FROM t_main x LEFT JOIN t_other y ON x.id = y.id";
+  const strict = analyzeSqlLineage(sql, {});
+  const loose = analyzeSqlLineage(sql, { looseMainAlias: true });
+
+  const strictHit = strict.lineageEdges.find((e) => e.targetField === "out_ori");
+  const looseHit = loose.lineageEdges.find((e) => e.targetField === "out_ori");
+
+  assert.equal(strictHit.sourceTable, "UNRESOLVED");
+  assert.equal(strictHit.sourceField, "ori");
+  assert.equal(looseHit.sourceTable, "t_main");
+  assert.equal(looseHit.sourceField, "ori");
+});
+
+test("same physical table with different aliases should stay separated", () => {
+  const sql = "SELECT t1.cust_name AS n1, t2.cust_name AS n2 FROM table_a t1 JOIN table_a t2 ON t1.id = t2.id";
+  const result = analyzeSqlLineage(sql, {});
+  const n1 = result.lineageEdges.find((e) => e.targetField === "n1");
+  const n2 = result.lineageEdges.find((e) => e.targetField === "n2");
+  assert.equal(n1.sourceTable, "table_a");
+  assert.equal(n2.sourceTable, "table_a");
+  assert.equal(n1.sourceAlias, "t1");
+  assert.equal(n2.sourceAlias, "t2");
+  const rowN1 = result.rows.find((r) => r.mappedField === "n1");
+  const rowN2 = result.rows.find((r) => r.mappedField === "n2");
+  assert.equal(rowN1.sourceTable, "table_a t1");
+  assert.equal(rowN2.sourceTable, "table_a t2");
+});
+
+test("graph edges should include cte stage and final stage", () => {
+  const sql = "WITH c AS (SELECT a AS b FROM t) SELECT b AS out FROM c";
+  const result = analyzeSqlLineage(sql, {});
+  const hasCteStage = result.graphEdges.some((e) => e.targetTable === "c" && e.targetField === "b");
+  const hasFinalStage = result.graphEdges.some((e) => e.targetTable === "RESULT_1" && e.targetField === "out");
+  const hasCToFinal = result.graphEdges.some((e) => e.sourceTable === "c" && e.sourceField === "b" && e.targetTable === "RESULT_1" && e.targetField === "out");
+  const hasBaseToFinal = result.graphEdges.some((e) => e.sourceTable === "t" && e.sourceField === "a" && e.targetTable === "RESULT_1" && e.targetField === "out");
+  assert.equal(hasCteStage, true);
+  assert.equal(hasFinalStage, true);
+  assert.equal(hasCToFinal, true);
+  assert.equal(hasBaseToFinal, false);
+});
+
+test("with + insert overwrite should resolve target table", () => {
+  const sql = `WITH c AS (SELECT a AS b FROM t)
+INSERT OVERWRITE TABLE ads_x
+SELECT b AS out_col FROM c`;
+  const result = analyzeSqlLineage(sql, {});
+  assert.equal(result.rows.length > 0, true);
+  assert.equal(result.rows.every((r) => r.targetTable === "ads_x"), true);
+});
+
+test("subquery stage should include base->subquery and subquery->result", () => {
+  const sql = "SELECT b1.qty AS out_qty FROM (SELECT sum(qty) AS qty FROM base_t) b1";
+  const result = analyzeSqlLineage(sql, {});
+  const hasBaseToB1 = result.graphEdges.some((e) =>
+    e.sourceTable === "base_t" && e.sourceField === "qty" && e.targetTable === "b1" && e.targetField === "qty"
+  );
+  const hasB1ToResult = result.graphEdges.some((e) =>
+    e.sourceTable === "b1" && e.sourceField === "qty" && e.targetTable === "RESULT_1" && e.targetField === "out_qty"
+  );
+  const hasBaseToResult = result.graphEdges.some((e) =>
+    e.sourceTable === "base_t" && e.sourceField === "qty" && e.targetTable === "RESULT_1" && e.targetField === "out_qty"
+  );
+  assert.equal(hasBaseToB1, true);
+  assert.equal(hasB1ToResult, true);
+  assert.equal(hasBaseToResult, false);
+});
+
+test("complex nested query should expose intermediate target tables", () => {
+  const sql = "SELECT x.z AS out_col FROM (SELECT i.y AS z FROM (SELECT a AS y FROM t) i) x";
+  const result = analyzeSqlLineage(sql, {});
+  const targets = new Set(result.graphEdges.map((e) => e.targetTable));
+  assert.equal(targets.has("i"), true);
+  assert.equal(targets.has("x"), true);
+  assert.equal(targets.has("RESULT_1"), true);
+});

@@ -38,7 +38,7 @@
     var out = [];
     for (var i = 0; i < sources.length; i += 1) {
       var item = sources[i];
-      var key = item.table + "::" + item.field;
+      var key = item.table + "::" + (item.alias || "") + "::" + item.field;
       if (!seen[key]) {
         seen[key] = true;
         out.push(item);
@@ -630,7 +630,9 @@
       }
 
       if (!inSingle && !inDouble && !inBacktick && !inBracket && depth === 0) {
-        var joinMatch = rest.match(/^(left\s+join|right\s+join|full\s+join|inner\s+join|join)\b/i);
+        var joinMatch = rest.match(
+          /^(left\s+(?:semi\s+|anti\s+|outer\s+)?join|right\s+(?:outer\s+)?join|full\s+(?:outer\s+)?join|inner\s+join|cross\s+join|join)\b/i
+        );
         if (joinMatch) {
           pushChunk(chunk);
           chunk = "";
@@ -647,22 +649,23 @@
     return sources;
   }
 
-  function parseSourceSpec(spec, env, debug) {
+  function parseSourceSpec(spec, env, debug, options) {
     var trimmed = spec.trim();
     if (!trimmed) {
       return null;
     }
 
-    var subMatch = trimmed.match(/^\(([\s\S]*)\)\s+(?:as\s+)?([a-zA-Z_][\w$]*)$/i);
+    var subMatch = trimmed.match(/^\(([\s\S]*)\)\s*(?:as\s+)?([a-zA-Z_][\w$]*)$/i);
     if (subMatch) {
       var subSql = subMatch[1].trim();
       var alias = subMatch[2];
-      var analyzed = analyzeQuery(subSql, env, "DERIVED", debug);
+      var analyzed = analyzeQuery(subSql, env, alias, debug, options);
       return {
         alias: alias,
         type: "derived",
         table: analyzed.outputTable,
         columnMap: analyzed.columnMap,
+        graphEdges: analyzed.graphEdges || [],
       };
     }
 
@@ -681,6 +684,7 @@
         type: "derived",
         table: table,
         columnMap: env.tables[table].columnMap,
+        graphEdges: [],
       };
     }
 
@@ -690,6 +694,7 @@
         type: "derived",
         table: table,
         columnMap: env.ctes[table].columnMap,
+        graphEdges: [],
       };
     }
 
@@ -698,10 +703,12 @@
       type: "base",
       table: table,
       columnMap: null,
+      graphEdges: [],
     };
   }
 
-  function resolveRef(ref, sourceMap, debug) {
+  function resolveRef(ref, sourceMap, debug, resolveOptions) {
+    var opts = resolveOptions || {};
     var aliases = Object.keys(sourceMap);
     var out = [];
 
@@ -710,14 +717,14 @@
         return [{ table: "UNRESOLVED", field: field }];
       }
       if (src.type === "base") {
-        return [{ table: src.table, field: field }];
+        return [{ table: src.table, alias: src.alias, field: field }];
       }
       var key = field.toLowerCase();
       var derived = src.columnMap[key];
       if (derived && derived.length) {
         return derived;
       }
-      return [{ table: src.table, field: field }];
+      return [{ table: src.table, alias: src.alias || src.table, field: field }];
     }
 
     if (ref.qualifier) {
@@ -744,8 +751,73 @@
       return dedupeSources(out);
     }
 
+    if (opts.looseMainAlias && opts.primaryAlias && sourceMap[opts.primaryAlias]) {
+      debug.push({
+        type: "loose_main_alias_fallback",
+        field: ref.field,
+        alias: opts.primaryAlias,
+      });
+      return resolveFromSource(sourceMap[opts.primaryAlias], ref.field);
+    }
+
     debug.push({ type: "ambiguous_unqualified", field: ref.field, aliases: aliases });
     return [{ table: "UNRESOLVED", field: ref.field }];
+  }
+
+  function resolveRefImmediate(ref, sourceMap, debug, resolveOptions) {
+    var opts = resolveOptions || {};
+    var aliases = Object.keys(sourceMap);
+    var out = [];
+
+    function sourceAsImmediate(src, field) {
+      if (!src) {
+        return [{ table: "UNRESOLVED", alias: "UNRESOLVED", field: field }];
+      }
+      if (src.type === "base") {
+        return [{ table: src.table, alias: src.alias, field: field }];
+      }
+      var logical = src.alias || src.table;
+      return [{ table: logical, alias: logical, field: field }];
+    }
+
+    if (ref.qualifier) {
+      var q = sourceMap[ref.qualifier];
+      if (!q) {
+        debug.push({ type: "unknown_alias", alias: ref.qualifier, field: ref.field });
+        return [{ table: "UNRESOLVED", alias: "UNRESOLVED", field: ref.field }];
+      }
+      return sourceAsImmediate(q, ref.field);
+    }
+
+    if (aliases.length === 1) {
+      return sourceAsImmediate(sourceMap[aliases[0]], ref.field);
+    }
+
+    for (var i = 0; i < aliases.length; i += 1) {
+      var src = sourceMap[aliases[i]];
+      if (src.type === "derived" && src.columnMap[ref.field.toLowerCase()]) {
+        out.push({
+          table: src.alias || src.table,
+          alias: src.alias || src.table,
+          field: ref.field,
+        });
+      }
+    }
+    if (out.length) {
+      return dedupeSources(out);
+    }
+
+    if (opts.looseMainAlias && opts.primaryAlias && sourceMap[opts.primaryAlias]) {
+      debug.push({
+        type: "loose_main_alias_fallback",
+        field: ref.field,
+        alias: opts.primaryAlias,
+      });
+      return sourceAsImmediate(sourceMap[opts.primaryAlias], ref.field);
+    }
+
+    debug.push({ type: "ambiguous_unqualified", field: ref.field, aliases: aliases });
+    return [{ table: "UNRESOLVED", alias: "UNRESOLVED", field: ref.field }];
   }
 
   function buildColumnMap(columns) {
@@ -780,16 +852,22 @@
     return merged;
   }
 
-  function analyzeSingleSelect(selectSql, env, targetTable, debug) {
+  function analyzeSingleSelect(selectSql, env, targetTable, debug, options) {
     var parts = getSelectFromParts(selectSql);
     var selectItems = splitSelectItems(parts.selectPart);
     var fromSources = splitFromSources(parts.fromPart);
 
     var sourceMap = {};
+    var sourceGraphEdges = [];
+    var primaryAlias = "";
     for (var i = 0; i < fromSources.length; i += 1) {
-      var src = parseSourceSpec(fromSources[i], env, debug);
+      var src = parseSourceSpec(fromSources[i], env, debug, options);
       if (src) {
         sourceMap[src.alias] = src;
+        sourceGraphEdges = sourceGraphEdges.concat(src.graphEdges || []);
+        if (!primaryAlias) {
+          primaryAlias = src.alias;
+        }
       }
     }
 
@@ -798,18 +876,26 @@
       var item = parseSelectItem(selectItems[j]);
       var refs = extractColumnRefs(item.expression);
       var sources = [];
+      var stageSources = [];
 
       for (var r = 0; r < refs.length; r += 1) {
-        sources = sources.concat(resolveRef(refs[r], sourceMap, debug));
+        var resolveOpts = {
+          looseMainAlias: !!(options && options.looseMainAlias),
+          primaryAlias: primaryAlias,
+        };
+        sources = sources.concat(resolveRef(refs[r], sourceMap, debug, resolveOpts));
+        stageSources = stageSources.concat(resolveRefImmediate(refs[r], sourceMap, debug, resolveOpts));
       }
 
       sources = dedupeSources(sources);
+      stageSources = dedupeSources(stageSources);
 
       cols.push({
         output: normalizeIdentifier(item.output),
         expression: item.expression,
         comment: item.comment,
         sources: sources,
+        stageSources: stageSources,
       });
     }
 
@@ -817,12 +903,14 @@
       outputTable: targetTable,
       columns: cols,
       columnMap: buildColumnMap(cols),
+      graphEdges: dedupeEdges(sourceGraphEdges.concat(edgesFromColumns(cols, targetTable, true))),
     };
   }
 
-  function analyzeQuery(sql, env, targetTable, debug) {
+  function analyzeQuery(sql, env, targetTable, debug, options) {
     var normalized = stripOuterParens(stripTailSemicolon(normalizeSql(sql)));
     var withInfo = parseWithClause(normalized);
+    var graphEdges = [];
 
     var scoped = {
       tables: env.tables || {},
@@ -831,16 +919,19 @@
 
     for (var i = 0; i < withInfo.ctes.length; i += 1) {
       var cte = withInfo.ctes[i];
-      var cteAnalyzed = analyzeQuery(cte.sql, scoped, cte.name, debug);
+      var cteAnalyzed = analyzeQuery(cte.sql, scoped, cte.name, debug, options);
       scoped.ctes[cte.name] = {
         columnMap: cteAnalyzed.columnMap,
       };
+      graphEdges = graphEdges.concat(cteAnalyzed.graphEdges || []);
     }
 
     var branches = splitUnionBranches(withInfo.mainQuery);
     var branchCols = [];
     for (var b = 0; b < branches.length; b += 1) {
-      branchCols.push(analyzeSingleSelect(branches[b], scoped, targetTable, debug).columns);
+      var single = analyzeSingleSelect(branches[b], scoped, targetTable, debug, options);
+      branchCols.push(single.columns);
+      graphEdges = graphEdges.concat(single.graphEdges || []);
     }
 
     var columns = mergeUnionColumns(branchCols);
@@ -848,12 +939,51 @@
       outputTable: targetTable,
       columns: columns,
       columnMap: buildColumnMap(columns),
+      graphEdges: dedupeEdges(graphEdges),
     };
   }
 
   function parseStatementTarget(sql, index) {
     var s = normalizeSql(sql);
     var clean = stripSqlComments(s);
+
+    function parseInsertAt(offset) {
+      var restClean = clean.slice(offset).trim();
+      var overwrite = restClean.match(/^insert\s+overwrite\s+table\s+([a-zA-Z_][\w$.]*)\b/i);
+      if (overwrite) {
+        var relSelect = findTopLevelKeyword(restClean, "select", 0);
+        if (relSelect >= 0) {
+          var prefix = s.slice(0, offset);
+          var restRaw = s.slice(offset).trim();
+          var rawSelect = findTopLevelKeyword(stripSqlComments(restRaw), "select", 0);
+          var selectPart = rawSelect >= 0 ? restRaw.slice(rawSelect) : restRaw;
+          return {
+            targetTable: overwrite[1],
+            query: (prefix ? (prefix + " ") : "") + selectPart,
+          };
+        }
+        return { targetTable: overwrite[1], query: s };
+      }
+
+      var into = restClean.match(/^insert\s+into\s+([a-zA-Z_][\w$.]*)\b/i);
+      if (into) {
+        var relSelect2 = findTopLevelKeyword(restClean, "select", 0);
+        if (relSelect2 >= 0) {
+          var prefix2 = s.slice(0, offset);
+          var restRaw2 = s.slice(offset).trim();
+          var rawSelect2 = findTopLevelKeyword(stripSqlComments(restRaw2), "select", 0);
+          var selectPart2 = rawSelect2 >= 0 ? restRaw2.slice(rawSelect2) : restRaw2;
+          return {
+            targetTable: into[1],
+            query: (prefix2 ? (prefix2 + " ") : "") + selectPart2,
+          };
+        }
+        return { targetTable: into[1], query: s };
+      }
+
+      return null;
+    }
+
     var create = s.match(/^\s*create\s+table\s+([a-zA-Z_][\w$.]*)\s+as\s+([\s\S]+)$/i);
     if (create) {
       return { targetTable: create[1], query: create[2] };
@@ -879,6 +1009,16 @@
       };
     }
 
+    if (/^\s*with\b/i.test(clean)) {
+      var withInsertIdx = findTopLevelKeyword(clean, "insert", 0);
+      if (withInsertIdx >= 0) {
+        var parsed = parseInsertAt(withInsertIdx);
+        if (parsed) {
+          return parsed;
+        }
+      }
+    }
+
     return { targetTable: "RESULT_" + (index + 1), query: s };
   }
 
@@ -886,14 +1026,16 @@
     return splitTopLevelByChar(sql, ";").filter(function (x) { return x.trim(); });
   }
 
-  function edgesFromAnalysis(analysis, targetTable) {
+  function edgesFromColumns(columns, targetTable, useStageSources) {
     var edges = [];
-    for (var i = 0; i < analysis.columns.length; i += 1) {
-      var col = analysis.columns[i];
-      var srcs = col.sources.length ? col.sources : classifyFallbackSource(col);
+    for (var i = 0; i < columns.length; i += 1) {
+      var col = columns[i];
+      var primary = useStageSources ? (col.stageSources || []) : col.sources;
+      var srcs = primary.length ? primary : classifyFallbackSource(col);
       for (var s = 0; s < srcs.length; s += 1) {
         edges.push({
           sourceTable: srcs[s].table,
+          sourceAlias: srcs[s].alias || srcs[s].table,
           sourceField: srcs[s].field,
           targetTable: targetTable,
           targetField: col.output,
@@ -903,6 +1045,10 @@
       }
     }
     return edges;
+  }
+
+  function edgesFromAnalysis(analysis, targetTable) {
+    return edgesFromColumns(analysis.columns, targetTable);
   }
 
   function isSystemFuncOrConst(expression) {
@@ -937,7 +1083,7 @@
     var out = [];
     for (var i = 0; i < edges.length; i += 1) {
       var e = edges[i];
-      var key = [e.sourceTable, e.sourceField, e.targetTable, e.targetField].join("|");
+      var key = [e.sourceTable, e.sourceAlias || "", e.sourceField, e.targetTable, e.targetField].join("|");
       if (!seen[key]) {
         seen[key] = true;
         out.push(e);
@@ -958,7 +1104,11 @@
           sources: [],
         };
       }
-      grouped[key].sources.push({ table: e.sourceTable, field: e.sourceField });
+      grouped[key].sources.push({
+        table: e.sourceTable,
+        alias: e.sourceAlias || e.sourceTable,
+        field: e.sourceField,
+      });
     }
 
     return Object.keys(grouped).map(function (k) {
@@ -992,7 +1142,10 @@
 
     for (var i = 0; i < edges.length; i += 1) {
       var e = edges[i];
-      var srcLabel = e.sourceTable + "." + e.sourceField;
+      var srcHead = (e.sourceAlias && e.sourceAlias !== e.sourceTable)
+        ? (e.sourceTable + " " + e.sourceAlias)
+        : e.sourceTable;
+      var srcLabel = srcHead + "." + e.sourceField;
       var midLabel = e.targetField;
       var dstLabel = e.targetTable;
       var srcId = getNodeId(srcLabel, "src");
@@ -1017,18 +1170,18 @@
   function validateConsistency(rows, edges, treeRows) {
     var rowKeys = {};
     rows.forEach(function (r) {
-      rowKeys[[r.sourceTable, r.sourceField, r.targetTable, r.mappedField].join("|")] = true;
+      rowKeys[[r.sourceTableRaw || r.sourceTable, r.sourceAlias || "", r.sourceField, r.targetTable, r.mappedField].join("|")] = true;
     });
 
     var edgeKeys = {};
     edges.forEach(function (e) {
-      edgeKeys[[e.sourceTable, e.sourceField, e.targetTable, e.targetField].join("|")] = true;
+      edgeKeys[[e.sourceTable, e.sourceAlias || "", e.sourceField, e.targetTable, e.targetField].join("|")] = true;
     });
 
     var treeKeys = {};
     treeRows.forEach(function (group) {
       group.sources.forEach(function (s) {
-        treeKeys[[s.table, s.field, group.targetTable, group.targetField].join("|")] = true;
+        treeKeys[[s.table, s.alias || "", s.field, group.targetTable, group.targetField].join("|")] = true;
       });
     });
 
@@ -1073,6 +1226,7 @@
   }
 
   function analyzeSqlLineage(sql, options) {
+    var opts = options || {};
     var normalized = stripTailSemicolon(normalizeSql(sql));
     if (!normalized) {
       throw new Error("SQL is empty");
@@ -1081,24 +1235,32 @@
     var statements = splitStatements(normalized);
     var tableEnv = {};
     var allEdges = [];
+    var allGraphEdges = [];
     var debug = [];
 
     for (var i = 0; i < statements.length; i += 1) {
       var stmt = parseStatementTarget(statements[i], i);
-      var analysis = analyzeQuery(stmt.query, { tables: tableEnv, ctes: {} }, stmt.targetTable, debug);
+      var analysis = analyzeQuery(stmt.query, { tables: tableEnv, ctes: {} }, stmt.targetTable, debug, opts);
       var edges = edgesFromAnalysis(analysis, stmt.targetTable);
       allEdges = allEdges.concat(edges);
+      allGraphEdges = allGraphEdges.concat(analysis.graphEdges || edges);
       tableEnv[stmt.targetTable] = {
         columnMap: analysis.columnMap,
       };
     }
 
     allEdges = dedupeEdges(allEdges);
+    allGraphEdges = dedupeEdges(allGraphEdges);
 
     var rows = allEdges.map(function (e, idx) {
+      var sourceLabel = e.sourceAlias && e.sourceAlias !== e.sourceTable
+        ? e.sourceTable + " " + e.sourceAlias
+        : e.sourceTable;
       return {
         index: idx + 1,
-        sourceTable: e.sourceTable,
+        sourceTable: sourceLabel,
+        sourceTableRaw: e.sourceTable,
+        sourceAlias: e.sourceAlias || e.sourceTable,
         sourceField: e.sourceField,
         mappedField: e.targetField,
         targetTable: e.targetTable,
@@ -1113,6 +1275,7 @@
     return {
       rows: rows,
       lineageEdges: allEdges,
+      graphEdges: allGraphEdges,
       lineageTree: treeRows,
       mermaid: buildMermaid(allEdges),
       rewrittenSql: "",
