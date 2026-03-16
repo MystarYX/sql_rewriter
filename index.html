@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SQL Lineage Analyzer V2.2</title>
+  <title>SQL 字段映射与血缘分析 V2.3</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <main class="container">
     <header class="header">
-      <h1>SQL 字段映射与血缘分析（V2.2）</h1>
-      <p>范围：仅做字段映射、字段血缘和图形展示，不做 SQL 改写。</p>
+      <h1>SQL 字段映射与血缘分析（V2.3）</h1>
+      <p>范围：仅做字段映射、字段血缘与图形展示，不做 SQL 重写与标准字段替换。</p>
     </header>
 
     <section class="panel">
@@ -26,7 +26,7 @@
       <textarea id="standard-input" class="sql-input" placeholder="粘贴 SQL"></textarea>
 
       <div class="btn-row">
-        <button id="parse-btn" class="btn primary">解析</button>
+        <button id="parse-btn" class="btn primary">解析重构</button>
         <button id="clear-btn" class="btn">清空</button>
         <button id="copy-btn" class="btn">复制字段映射</button>
       </div>
@@ -76,7 +76,7 @@
     </section>
 
     <section class="panel result-panel">
-      <h2>横向血缘树</h2>
+      <h2>字段级血缘图</h2>
       <div id="tree-view" class="tree-view">
         <div class="tree-empty">暂无图形数据</div>
       </div>

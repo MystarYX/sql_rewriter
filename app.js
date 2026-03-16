@@ -4,7 +4,15 @@
   var activeMode = "legacy";
   var collapsedTables = {};
   var latestTreeRows = [];
+  var latestRows = [];
   var latestSummary = null;
+  var selectedNodeId = "";
+  var relationMode = true;
+  var graphEdges = [];
+  var renderTicking = false;
+  var exprTooltipTimer = null;
+  var tooltipPinned = false;
+  var tooltipOwnerId = "";
 
   var tabs = Array.from(document.querySelectorAll(".tab"));
   var parseBtn = document.getElementById("parse-btn");
@@ -22,6 +30,62 @@
   var standardInput = document.getElementById("standard-input");
   var labels = Array.from(document.querySelectorAll(".label"));
 
+  var tooltip = createTooltip();
+
+  function createTooltip() {
+    var el = document.createElement("div");
+    el.className = "expr-tooltip hidden";
+    el.innerHTML = [
+      '<div class="expr-tooltip-text"></div>',
+      '<button class="expr-copy-btn" type="button">复制</button>',
+    ].join("");
+    document.body.appendChild(el);
+    el.addEventListener("mouseenter", function () {
+      tooltipPinned = true;
+    });
+    el.addEventListener("mouseleave", function () {
+      tooltipPinned = false;
+      hideTooltip();
+    });
+    el.querySelector(".expr-copy-btn").addEventListener("click", function () {
+      var text = el.querySelector(".expr-tooltip-text").textContent || "";
+      navigator.clipboard.writeText(text).then(function () {
+        setMessage("表达式已复制", "success");
+      }).catch(function (err) {
+        setMessage("复制失败：" + err.message, "error");
+      });
+    });
+    return el;
+  }
+
+  function showTooltip(owner, text) {
+    if (!owner) {
+      return;
+    }
+    tooltipOwnerId = owner.getAttribute("data-node-id") || "";
+    tooltip.querySelector(".expr-tooltip-text").textContent = text || "";
+    tooltip.classList.remove("hidden");
+    var rect = owner.getBoundingClientRect();
+    var top = rect.top + window.scrollY - tooltip.offsetHeight - 10;
+    if (top < window.scrollY + 8) {
+      top = rect.bottom + window.scrollY + 8;
+    }
+    var left = Math.min(
+      rect.left + window.scrollX,
+      window.scrollX + window.innerWidth - tooltip.offsetWidth - 12
+    );
+    tooltip.style.top = top + "px";
+    tooltip.style.left = Math.max(window.scrollX + 12, left) + "px";
+  }
+
+  function hideTooltip() {
+    if (tooltipPinned) {
+      return;
+    }
+    tooltip.classList.add("hidden");
+    tooltipOwnerId = "";
+  }
+
   function currentInput() {
     return activeMode === "legacy" ? legacyInput : standardInput;
   }
@@ -38,8 +102,12 @@
     mermaidText.textContent = "graph LR";
     astSummaryEl.textContent = "AST 摘要：暂无";
     latestTreeRows = [];
+    latestRows = [];
     latestSummary = null;
     collapsedTables = {};
+    selectedNodeId = "";
+    graphEdges = [];
+    hideTooltip();
   }
 
   function renderFieldRows(rows) {
@@ -52,11 +120,11 @@
       return [
         "<tr>",
         "<td>" + (idx + 1) + "</td>",
-        "<td>" + (row.sourceTable || "UNRESOLVED") + "</td>",
-        "<td>" + (row.sourceField || "UNRESOLVED") + "</td>",
-        "<td>" + (row.mappedField || "UNRESOLVED") + "</td>",
-        "<td>" + (row.targetTable || "RESULT_1") + "</td>",
-        "<td>" + (row.comment || "") + "</td>",
+        "<td>" + escapeHtml(row.sourceTable || "UNRESOLVED") + "</td>",
+        "<td>" + escapeHtml(row.sourceField || "UNRESOLVED") + "</td>",
+        "<td>" + escapeHtml(row.mappedField || "UNRESOLVED") + "</td>",
+        "<td>" + escapeHtml(row.targetTable || "RESULT_1") + "</td>",
+        "<td>" + escapeHtml(row.comment || "") + "</td>",
         "</tr>",
       ].join("");
     }).join("");
@@ -71,10 +139,10 @@
     lineageBody.innerHTML = edges.map(function (e) {
       return [
         "<tr>",
-        "<td>" + (e.sourceTable || "UNRESOLVED") + "</td>",
-        "<td>" + (e.sourceField || "UNRESOLVED") + "</td>",
-        "<td>" + (e.targetTable || "RESULT_1") + "</td>",
-        "<td>" + (e.targetField || "UNRESOLVED") + "</td>",
+        "<td>" + escapeHtml(e.sourceTable || "UNRESOLVED") + "</td>",
+        "<td>" + escapeHtml(e.sourceField || "UNRESOLVED") + "</td>",
+        "<td>" + escapeHtml(e.targetTable || "RESULT_1") + "</td>",
+        "<td>" + escapeHtml(e.targetField || "UNRESOLVED") + "</td>",
         "</tr>",
       ].join("");
     }).join("");
@@ -85,211 +153,12 @@
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
+      .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
-  }
-
-  function getCollapsedRows(treeRows) {
-    if (!treeRows || !treeRows.length) {
-      return [];
-    }
-
-    return treeRows.map(function (row) {
-      var filtered = row.sources.filter(function (s) {
-        return !collapsedTables[s.table];
-      });
-      return {
-        targetField: row.targetField,
-        targetTable: row.targetTable,
-        sources: filtered,
-      };
-    });
-  }
-
-  function renderGraph(treeRows) {
-    if (!treeRows || !treeRows.length) {
-      treeView.innerHTML = '<div class="graph-empty">暂无图形数据</div>';
-      return;
-    }
-
-    var visibleRows = getCollapsedRows(treeRows);
-
-    var tableToFields = {};
-    var tableOrder = [];
-    var tableSeen = {};
-    var fieldOrder = [];
-    var fieldSeen = {};
-    var targetOrder = [];
-    var targetSeen = {};
-    var resultOrder = [];
-    var resultSeen = {};
-
-    visibleRows.forEach(function (row) {
-      if (!targetSeen[row.targetField]) {
-        targetSeen[row.targetField] = true;
-        targetOrder.push(row.targetField);
-      }
-      if (!resultSeen[row.targetTable]) {
-        resultSeen[row.targetTable] = true;
-        resultOrder.push(row.targetTable);
-      }
-
-      row.sources.forEach(function (s) {
-        var tableName = s.table;
-        var fieldName = s.field;
-        var tfKey = tableName + "::" + fieldName;
-        if (!tableSeen[tableName]) {
-          tableSeen[tableName] = true;
-          tableOrder.push(tableName);
-          tableToFields[tableName] = [];
-        }
-        if (!fieldSeen[tfKey]) {
-          fieldSeen[tfKey] = true;
-          fieldOrder.push({ table: tableName, field: fieldName, key: tfKey });
-          tableToFields[tableName].push(tfKey);
-        }
-      });
-    });
-
-    var allTables = {};
-    treeRows.forEach(function (row) {
-      row.sources.forEach(function (s) {
-        allTables[s.table] = true;
-      });
-    });
-    Object.keys(allTables).forEach(function (tableName) {
-      if (!tableSeen[tableName]) {
-        tableSeen[tableName] = true;
-        tableOrder.push(tableName);
-        tableToFields[tableName] = [];
-      }
-    });
-
-    var tableNode = {};
-    var fieldNode = {};
-    var targetNode = {};
-    var resultNode = {};
-
-    var tableX = 24;
-    var fieldX = 470;
-    var targetX = 850;
-    var resultX = 1220;
-
-    var tableW = 300;
-    var fieldW = 220;
-    var targetW = 190;
-    var resultW = 180;
-
-    var tableH = 68;
-    var fieldH = 54;
-    var targetH = 54;
-    var resultH = 56;
-
-    var rowGap = 124;
-    var topY = 24;
-    var totalRows = Math.max(fieldOrder.length, targetOrder.length, tableOrder.length, 1);
-    var canvasH = topY * 2 + totalRows * rowGap + 80;
-    var canvasW = 1500;
-
-    var html = [];
-    html.push('<div class="graph-toolbar">');
-    html.push('<button class="mini-btn" data-action="expand-all">全部展开</button>');
-    html.push('<button class="mini-btn" data-action="collapse-all">全部折叠</button>');
-    html.push('</div>');
-
-    html.push('<div class="graph-canvas" style="height:' + canvasH + 'px; min-width:' + canvasW + 'px;">');
-    html.push('<svg class="graph-svg" viewBox="0 0 ' + canvasW + ' ' + canvasH + '" preserveAspectRatio="none">');
-    html.push('<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#2f3136"></path></marker></defs>');
-
-    fieldOrder.forEach(function (item, idx) {
-      var fy = topY + idx * rowGap + 6;
-      fieldNode[item.key] = { x: fieldX, y: fy, w: fieldW, h: fieldH };
-      html.push('<foreignObject x="' + fieldX + '" y="' + fy + '" width="' + fieldW + '" height="' + fieldH + '"><div xmlns="http://www.w3.org/1999/xhtml" class="graph-node field">' + escapeHtml(item.field) + '</div></foreignObject>');
-    });
-
-    tableOrder.forEach(function (tableName, idx) {
-      var fields = tableToFields[tableName] || [];
-      var ys = fields.map(function (k) { return fieldNode[k].y + fieldNode[k].h / 2; });
-      var midY = ys.length ? (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2 : (topY + idx * rowGap + tableH / 2);
-      var ty = Math.max(topY, midY - tableH / 2);
-      var collapsed = !!collapsedTables[tableName];
-      tableNode[tableName] = { x: tableX, y: ty, w: tableW, h: tableH };
-      html.push('<foreignObject x="' + tableX + '" y="' + ty + '" width="' + tableW + '" height="' + tableH + '"><div xmlns="http://www.w3.org/1999/xhtml" class="graph-node table' + (collapsed ? ' collapsed' : '') + '"><div class="table-title">' + escapeHtml(tableName) + '</div><button class="table-toggle" data-table="' + escapeHtml(tableName) + '">' + (collapsed ? '展开' : '折叠') + '</button></div></foreignObject>');
-    });
-
-    targetOrder.forEach(function (label, idx) {
-      var y = topY + idx * rowGap + 6;
-      targetNode[label] = { x: targetX, y: y, w: targetW, h: targetH };
-      html.push('<foreignObject x="' + targetX + '" y="' + y + '" width="' + targetW + '" height="' + targetH + '"><div xmlns="http://www.w3.org/1999/xhtml" class="graph-node target">' + escapeHtml(label) + '</div></foreignObject>');
-    });
-
-    resultOrder.forEach(function (label, idx) {
-      var y = topY + Math.floor(totalRows / 2) * rowGap + idx * (rowGap + 10);
-      resultNode[label] = { x: resultX, y: y, w: resultW, h: resultH };
-      html.push('<foreignObject x="' + resultX + '" y="' + y + '" width="' + resultW + '" height="' + resultH + '"><div xmlns="http://www.w3.org/1999/xhtml" class="graph-node result">' + escapeHtml(label) + '</div></foreignObject>');
-    });
-
-    function pathD(fromN, toN) {
-      var sx = fromN.x + fromN.w;
-      var sy = fromN.y + fromN.h / 2;
-      var ex = toN.x;
-      var ey = toN.y + toN.h / 2;
-      var dx = ex - sx;
-      var c1x = sx + Math.max(30, dx * 0.36);
-      var c2x = ex - Math.max(30, dx * 0.36);
-      return "M" + sx + "," + sy + " C" + c1x + "," + sy + " " + c2x + "," + ey + " " + ex + "," + ey;
-    }
-
-    var edgeSeen = {};
-
-    Object.keys(tableToFields).forEach(function (tableName) {
-      var tNode = tableNode[tableName];
-      (tableToFields[tableName] || []).forEach(function (fKey) {
-        var fNode = fieldNode[fKey];
-        if (!tNode || !fNode) {
-          return;
-        }
-        var eKey = "T->F:" + tableName + "->" + fKey;
-        if (!edgeSeen[eKey]) {
-          edgeSeen[eKey] = true;
-          html.push('<path class="graph-edge" marker-end="url(#arrow)" d="' + pathD(tNode, fNode) + '"></path>');
-        }
-      });
-    });
-
-    visibleRows.forEach(function (row) {
-      var t = targetNode[row.targetField];
-      var r = resultNode[row.targetTable];
-
-      row.sources.forEach(function (s) {
-        var fKey = s.table + "::" + s.field;
-        var fNode = fieldNode[fKey];
-        if (!fNode || !t) {
-          return;
-        }
-        var eKey = "F->M:" + fKey + "->" + row.targetField;
-        if (!edgeSeen[eKey]) {
-          edgeSeen[eKey] = true;
-          html.push('<path class="graph-edge" marker-end="url(#arrow)" d="' + pathD(fNode, t) + '"></path>');
-        }
-      });
-
-      if (t && r) {
-        var eKey2 = "M->R:" + row.targetField + "->" + row.targetTable;
-        if (!edgeSeen[eKey2]) {
-          edgeSeen[eKey2] = true;
-          html.push('<path class="graph-edge" marker-end="url(#arrow)" d="' + pathD(t, r) + '"></path>');
-        }
-      }
-    });
-
-    html.push('</svg></div>');
-    treeView.innerHTML = html.join("");
   }
 
   function switchMode(mode) {
     activeMode = mode;
-
     tabs.forEach(function (tab) {
       var isActive = tab.getAttribute("data-mode") === mode;
       tab.classList.toggle("active", isActive);
@@ -301,10 +170,9 @@
 
     labels.forEach(function (label) {
       var forId = label.getAttribute("for");
-      var shouldShow = (mode === "legacy" && forId === "legacy-input") || (mode === "standard" && forId === "standard-input");
-      label.classList.toggle("hidden", !shouldShow);
+      var show = (mode === "legacy" && forId === "legacy-input") || (mode === "standard" && forId === "standard-input");
+      label.classList.toggle("hidden", !show);
     });
-
     setMessage("");
   }
 
@@ -330,6 +198,404 @@
     return window.SQLParser.analyzeSqlLineage(sql, {});
   }
 
+  function buildGraphModel(treeRows, rows) {
+    var exprByTargetKey = {};
+    rows.forEach(function (r) {
+      var key = (r.targetTable || "RESULT_1") + "::" + r.mappedField;
+      if (!exprByTargetKey[key] && r.expression) {
+        exprByTargetKey[key] = r.expression;
+      }
+    });
+
+    var tableMap = {};
+    var sourceSet = {};
+    treeRows.forEach(function (row) {
+      row.sources.forEach(function (s) {
+        var key = s.table + "::" + s.field;
+        sourceSet[key] = true;
+        if (!tableMap[s.table]) {
+          tableMap[s.table] = [];
+        }
+        tableMap[s.table].push({ table: s.table, field: s.field, key: key });
+      });
+    });
+
+    Object.keys(tableMap).forEach(function (table) {
+      var seen = {};
+      tableMap[table] = tableMap[table].filter(function (x) {
+        if (seen[x.key]) {
+          return false;
+        }
+        seen[x.key] = true;
+        return true;
+      }).sort(function (a, b) {
+        return a.field.localeCompare(b.field);
+      });
+    });
+
+    var targetItems = [];
+    var targetSeen = {};
+    treeRows.forEach(function (row) {
+      var tKey = row.targetTable + "::" + row.targetField;
+      if (!targetSeen[tKey]) {
+        targetSeen[tKey] = true;
+        targetItems.push({
+          key: tKey,
+          targetField: row.targetField,
+          targetTable: row.targetTable,
+        });
+      }
+    });
+
+    return {
+      tableMap: tableMap,
+      tableOrder: Object.keys(tableMap).sort(),
+      targetItems: targetItems,
+      expressionByTargetKey: exprByTargetKey,
+      treeRows: treeRows,
+    };
+  }
+
+  function renderGraph(treeRows, rows) {
+    if (!treeRows || !treeRows.length) {
+      treeView.innerHTML = '<div class="graph-empty">暂无图形数据</div>';
+      graphEdges = [];
+      return;
+    }
+
+    var model = buildGraphModel(treeRows, rows || []);
+    var html = [];
+    html.push('<div class="graph-toolbar">');
+    html.push('<label class="toggle-wrap"><input id="relation-toggle" type="checkbox" ' + (relationMode ? "checked" : "") + ' />查看上下游关系</label>');
+    html.push('<button class="mini-btn" data-action="toggle-fullscreen">' + (isTreeFullscreen() ? "退出全屏" : "血缘图全屏") + "</button>");
+    html.push('<button class="mini-btn" data-action="expand-all">全部展开</button>');
+    html.push('<button class="mini-btn" data-action="collapse-all">全部折叠</button>');
+    html.push("</div>");
+
+    html.push('<div class="graph-canvas datahub-canvas">');
+    html.push('<svg class="graph-svg"></svg>');
+    html.push('<div class="graph-columns">');
+
+    html.push('<section class="graph-col source-col"><h3>来源字段</h3>');
+    model.tableOrder.forEach(function (tableName) {
+      var collapsed = !!collapsedTables[tableName];
+      var fields = model.tableMap[tableName] || [];
+      html.push('<article class="source-card graph-node table" data-table="' + escapeHtml(tableName) + '">');
+      html.push('<div class="source-card-head"><div class="table-title">' + escapeHtml(tableName) + '</div><button class="table-toggle" data-table="' + escapeHtml(tableName) + '">' + (collapsed ? "展开" : "折叠") + "</button></div>");
+      html.push('<div class="source-field-list" data-table-list="' + escapeHtml(tableName) + '"' + (collapsed ? ' style="display:none;"' : "") + ">");
+      fields.forEach(function (f) {
+        var nid = "source:" + f.key;
+        html.push('<button type="button" class="source-field lineage-node graph-node field" data-node-id="' + escapeHtml(nid) + '" data-table="' + escapeHtml(f.table) + '" data-field="' + escapeHtml(f.field) + '">' + escapeHtml(f.field) + "</button>");
+      });
+      html.push("</div>");
+      html.push('<button type="button" class="other-anchor lineage-node" data-node-id="anchor:' + escapeHtml(tableName) + '" data-table="' + escapeHtml(tableName) + '">其他字段(+0)</button>');
+      html.push("</article>");
+    });
+    html.push("</section>");
+
+    html.push('<section class="graph-col expr-col"><h3>SELECT 原始表达式（AS前）</h3>');
+    model.targetItems.forEach(function (item) {
+      var expr = model.expressionByTargetKey[item.key] || item.targetField;
+      var nid = "expr:" + item.key;
+      html.push('<button type="button" class="expr-item lineage-node graph-node expr" data-node-id="' + escapeHtml(nid) + '" data-expr="' + escapeHtml(expr) + '">' + escapeHtml(expr) + "</button>");
+    });
+    html.push("</section>");
+
+    html.push('<section class="graph-col target-col"><h3>目标字段（AS后）</h3>');
+    model.targetItems.forEach(function (item) {
+      var nid = "target:" + item.key;
+      html.push('<button type="button" class="target-field lineage-node graph-node target" data-node-id="' + escapeHtml(nid) + '" title="' + escapeHtml(item.targetTable) + '"><span class="target-name">' + escapeHtml(item.targetField) + '</span><span class="target-table">' + escapeHtml(item.targetTable) + "</span></button>");
+    });
+    html.push("</section>");
+
+    html.push("</div></div>");
+    treeView.innerHTML = html.join("");
+
+    treeView.querySelectorAll(".source-field-list").forEach(function (listEl) {
+      listEl.addEventListener("scroll", scheduleEdgeRender);
+    });
+    treeView.querySelector(".datahub-canvas").addEventListener("scroll", scheduleEdgeRender);
+
+    var toggle = treeView.querySelector("#relation-toggle");
+    if (toggle) {
+      toggle.addEventListener("change", function () {
+        relationMode = !!toggle.checked;
+        applySelectionStyles();
+      });
+    }
+
+    scheduleEdgeRender();
+  }
+
+  function isWithinViewport(el, container) {
+    if (!el || !container) {
+      return false;
+    }
+    if (el.offsetParent === null) {
+      return false;
+    }
+    var a = el.getBoundingClientRect();
+    var b = container.getBoundingClientRect();
+    return a.bottom > b.top && a.top < b.bottom;
+  }
+
+  function edgePath(fromRect, toRect, baseRect) {
+    var sx = fromRect.right - baseRect.left;
+    var sy = fromRect.top + fromRect.height / 2 - baseRect.top;
+    var ex = toRect.left - baseRect.left;
+    var ey = toRect.top + toRect.height / 2 - baseRect.top;
+    var dx = ex - sx;
+    var c1x = sx + Math.max(28, dx * 0.42);
+    var c2x = ex - Math.max(28, dx * 0.42);
+    return "M" + sx + "," + sy + " C" + c1x + "," + sy + " " + c2x + "," + ey + " " + ex + "," + ey;
+  }
+
+  function scheduleEdgeRender() {
+    if (renderTicking) {
+      return;
+    }
+    renderTicking = true;
+    window.requestAnimationFrame(function () {
+      renderTicking = false;
+      renderEdges();
+      applySelectionStyles();
+    });
+  }
+
+  function renderEdges() {
+    var canvas = treeView.querySelector(".datahub-canvas");
+    var svg = treeView.querySelector(".graph-svg");
+    if (!canvas || !svg) {
+      graphEdges = [];
+      return;
+    }
+
+    var canvasRect = canvas.getBoundingClientRect();
+    var width = Math.max(canvas.scrollWidth, canvas.clientWidth);
+    var height = Math.max(canvas.scrollHeight, canvas.clientHeight);
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+
+    var parts = [];
+    parts.push('<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#4b5563"></path></marker></defs>');
+    graphEdges = [];
+
+    var treeRows = latestTreeRows || [];
+    var edgeSeen = {};
+
+    treeRows.forEach(function (row) {
+      var tKey = row.targetTable + "::" + row.targetField;
+      var exprEl = treeView.querySelector('[data-node-id="expr:' + cssEscape(tKey) + '"]');
+      var targetEl = treeView.querySelector('[data-node-id="target:' + cssEscape(tKey) + '"]');
+      if (!exprEl || !targetEl) {
+        return;
+      }
+
+      row.sources.forEach(function (s) {
+        var tableName = s.table;
+        var fieldName = s.field;
+        var sourceId = "source:" + tableName + "::" + fieldName;
+        var fromEl = treeView.querySelector('[data-node-id="' + cssEscape(sourceId) + '"]');
+        var listEl = treeView.querySelector('[data-table-list="' + cssEscape(tableName) + '"]');
+        var anchorEl = treeView.querySelector('[data-node-id="anchor:' + cssEscape(tableName) + '"]');
+        var useAnchor = false;
+
+        if (collapsedTables[tableName]) {
+          useAnchor = true;
+        } else if (!fromEl || !listEl || !isWithinViewport(fromEl, listEl)) {
+          useAnchor = true;
+        }
+
+        var startEl = useAnchor ? anchorEl : fromEl;
+        if (!startEl || !exprEl) {
+          return;
+        }
+
+        var exprId = "expr:" + tKey;
+        var edgeFrom = useAnchor ? ("anchor:" + tableName) : sourceId;
+        var eKey = "S2E|" + edgeFrom + "|" + tKey;
+        if (!edgeSeen[eKey]) {
+          edgeSeen[eKey] = true;
+          var d1 = edgePath(startEl.getBoundingClientRect(), exprEl.getBoundingClientRect(), canvasRect);
+          var cls1 = "graph-edge" + (useAnchor ? " dashed" : "");
+          parts.push('<path class="' + cls1 + '" marker-end="url(#arrow)" d="' + d1 + '"></path>');
+          graphEdges.push({
+            from: edgeFrom,
+            to: exprId,
+            dashed: useAnchor,
+          });
+        }
+      });
+
+      var eKey2 = "E2T|" + tKey;
+      if (!edgeSeen[eKey2]) {
+        edgeSeen[eKey2] = true;
+        var d2 = edgePath(exprEl.getBoundingClientRect(), targetEl.getBoundingClientRect(), canvasRect);
+        parts.push('<path class="graph-edge" marker-end="url(#arrow)" d="' + d2 + '"></path>');
+        graphEdges.push({
+          from: "expr:" + tKey,
+          to: "target:" + tKey,
+          dashed: false,
+        });
+      }
+    });
+
+    svg.innerHTML = parts.join("");
+    updateAnchorCounts();
+  }
+
+  function updateAnchorCounts() {
+    treeView.querySelectorAll(".source-card").forEach(function (card) {
+      var table = card.getAttribute("data-table");
+      var listEl = card.querySelector(".source-field-list");
+      var fields = Array.from(card.querySelectorAll(".source-field"));
+      var anchor = card.querySelector(".other-anchor");
+      if (!anchor) {
+        return;
+      }
+      if (collapsedTables[table]) {
+        anchor.textContent = "其他字段(+" + fields.length + ")";
+        return;
+      }
+      var visible = 0;
+      fields.forEach(function (f) {
+        if (isWithinViewport(f, listEl)) {
+          visible += 1;
+        }
+      });
+      var hidden = Math.max(fields.length - visible, 0);
+      anchor.textContent = "其他字段(+" + hidden + ")";
+    });
+  }
+
+  function applySelectionStyles() {
+    var nodes = Array.from(treeView.querySelectorAll(".lineage-node"));
+    var paths = Array.from(treeView.querySelectorAll(".graph-edge"));
+
+    nodes.forEach(function (n) {
+      n.classList.remove("selected", "active", "dim");
+    });
+    paths.forEach(function (p) {
+      p.classList.remove("active", "dim");
+    });
+
+    if (!selectedNodeId) {
+      return;
+    }
+
+    var selectedNode = treeView.querySelector('[data-node-id="' + cssEscape(selectedNodeId) + '"]');
+    if (selectedNode) {
+      selectedNode.classList.add("selected");
+    }
+
+    if (!relationMode) {
+      graphEdges.forEach(function (edge, idx) {
+        if (edge.from === selectedNodeId || edge.to === selectedNodeId) {
+          paths[idx] && paths[idx].classList.add("active");
+        }
+      });
+      return;
+    }
+
+    var related = {};
+    related[selectedNodeId] = true;
+    var selectedType = selectedNodeId.split(":")[0];
+
+    function markDirect(from, to) {
+      related[from] = true;
+      related[to] = true;
+    }
+
+    if (selectedType === "source" || selectedType === "anchor") {
+      var exprHits = {};
+      graphEdges.forEach(function (edge) {
+        if (edge.from === selectedNodeId && edge.to.indexOf("expr:") === 0) {
+          markDirect(edge.from, edge.to);
+          exprHits[edge.to] = true;
+        }
+      });
+      graphEdges.forEach(function (edge) {
+        if (exprHits[edge.from] && edge.to.indexOf("target:") === 0) {
+          markDirect(edge.from, edge.to);
+        }
+      });
+    } else if (selectedType === "expr") {
+      graphEdges.forEach(function (edge) {
+        if (edge.to === selectedNodeId && (edge.from.indexOf("source:") === 0 || edge.from.indexOf("anchor:") === 0)) {
+          markDirect(edge.from, edge.to);
+        }
+        if (edge.from === selectedNodeId && edge.to.indexOf("target:") === 0) {
+          markDirect(edge.from, edge.to);
+        }
+      });
+    } else if (selectedType === "target") {
+      var exprUp = {};
+      graphEdges.forEach(function (edge) {
+        if (edge.to === selectedNodeId && edge.from.indexOf("expr:") === 0) {
+          markDirect(edge.from, edge.to);
+          exprUp[edge.from] = true;
+        }
+      });
+      graphEdges.forEach(function (edge) {
+        if (exprUp[edge.to] && (edge.from.indexOf("source:") === 0 || edge.from.indexOf("anchor:") === 0)) {
+          markDirect(edge.from, edge.to);
+        }
+      });
+    }
+
+    nodes.forEach(function (n) {
+      var id = n.getAttribute("data-node-id");
+      if (related[id]) {
+        n.classList.add("active");
+      } else {
+        n.classList.add("dim");
+      }
+    });
+    paths.forEach(function (p, idx) {
+      var e = graphEdges[idx];
+      if (e && related[e.from] && related[e.to]) {
+        p.classList.add("active");
+      } else {
+        p.classList.add("dim");
+      }
+    });
+  }
+
+  function cssEscape(raw) {
+    return String(raw).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function clearSelection() {
+    selectedNodeId = "";
+    hideTooltip();
+    applySelectionStyles();
+  }
+
+  function isTreeFullscreen() {
+    return document.fullscreenElement === treeView;
+  }
+
+  function syncFullscreenState() {
+    treeView.classList.toggle("is-fullscreen", isTreeFullscreen());
+    var btn = treeView.querySelector('[data-action="toggle-fullscreen"]');
+    if (btn) {
+      btn.textContent = isTreeFullscreen() ? "退出全屏" : "血缘图全屏";
+    }
+    scheduleEdgeRender();
+  }
+
+  function toggleTreeFullscreen() {
+    if (!document.fullscreenEnabled) {
+      setMessage("当前浏览器不支持全屏", "error");
+      return Promise.resolve();
+    }
+    if (isTreeFullscreen()) {
+      return document.exitFullscreen();
+    }
+    return treeView.requestFullscreen();
+  }
+
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function () {
       switchMode(tab.getAttribute("data-mode"));
@@ -341,26 +607,65 @@
     if (toggle) {
       var tableName = toggle.getAttribute("data-table");
       collapsedTables[tableName] = !collapsedTables[tableName];
-      renderGraph(latestTreeRows);
+      renderGraph(latestTreeRows, latestRows);
       return;
     }
 
     var action = event.target.closest(".mini-btn");
     if (action) {
       var cmd = action.getAttribute("data-action");
-      if (cmd === "expand-all") {
+      if (cmd === "toggle-fullscreen") {
+        toggleTreeFullscreen().catch(function (err) {
+          setMessage("切换全屏失败：" + err.message, "error");
+        });
+        return;
+      } else if (cmd === "expand-all") {
         Object.keys(collapsedTables).forEach(function (k) { collapsedTables[k] = false; });
-        renderGraph(latestTreeRows);
       } else if (cmd === "collapse-all") {
         var tables = {};
         latestTreeRows.forEach(function (row) {
           row.sources.forEach(function (s) { tables[s.table] = true; });
         });
         Object.keys(tables).forEach(function (k) { collapsedTables[k] = true; });
-        renderGraph(latestTreeRows);
       }
+      renderGraph(latestTreeRows, latestRows);
+      return;
     }
+
+    var node = event.target.closest(".lineage-node");
+    if (node) {
+      selectedNodeId = node.getAttribute("data-node-id") || "";
+      applySelectionStyles();
+      return;
+    }
+
+    clearSelection();
   });
+
+  treeView.addEventListener("mouseenter", function (event) {
+    var expr = event.target.closest(".expr-item");
+    if (!expr) {
+      return;
+    }
+    clearTimeout(exprTooltipTimer);
+    var text = expr.getAttribute("data-expr") || expr.textContent || "";
+    exprTooltipTimer = setTimeout(function () {
+      showTooltip(expr, text);
+    }, 320);
+  }, true);
+
+  treeView.addEventListener("mouseleave", function (event) {
+    var expr = event.target.closest(".expr-item");
+    if (!expr) {
+      return;
+    }
+    clearTimeout(exprTooltipTimer);
+    setTimeout(function () {
+      if (!tooltipPinned) {
+        hideTooltip();
+      }
+    }, 80);
+  }, true);
 
   parseBtn.addEventListener("click", function () {
     try {
@@ -373,18 +678,19 @@
 
       var result = runAnalysis(sql);
       latestTreeRows = result.lineageTree || [];
+      latestRows = result.rows || [];
       latestSummary = {
         astSummary: result.astSummary,
         consistencyCheck: result.consistencyCheck || { pass: true },
       };
 
-      renderFieldRows(result.rows);
-      renderLineage(result.lineageEdges);
-      renderGraph(latestTreeRows);
+      renderFieldRows(latestRows);
+      renderLineage(result.lineageEdges || []);
+      renderGraph(latestTreeRows, latestRows);
       mermaidText.textContent = result.mermaid || "graph LR";
       astSummaryEl.textContent = "AST 摘要：\n" + JSON.stringify(latestSummary, null, 2);
 
-      if (!result.rows.length) {
+      if (!latestRows.length) {
         setMessage("解析失败：未提取到字段", "error");
       } else if (result.warnings && result.warnings.length) {
         setMessage("解析完成（存在未识别链路）", "error");
@@ -432,6 +738,18 @@
       setMessage("复制失败：" + error.message, "error");
     }
   });
+
+  window.addEventListener("resize", scheduleEdgeRender);
+  document.addEventListener("fullscreenchange", syncFullscreenState);
+  window.addEventListener("scroll", function () {
+    if (!tooltip.classList.contains("hidden")) {
+      var owner = treeView.querySelector('[data-node-id="' + cssEscape(tooltipOwnerId) + '"]');
+      if (owner) {
+        showTooltip(owner, owner.getAttribute("data-expr") || owner.textContent || "");
+      }
+    }
+    scheduleEdgeRender();
+  }, { passive: true });
 
   switchMode("legacy");
 })();
