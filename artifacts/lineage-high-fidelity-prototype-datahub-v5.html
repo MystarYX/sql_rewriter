@@ -1,0 +1,883 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>字段血缘图 - DataHub风格高保真 V5</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --line: #dbe4ef;
+      --ink: #1f2d3d;
+      --muted: #6a7f93;
+      --edge: #9fb3c9;
+      --edge-hi: #2f76bd;
+      --edge-dash: #7f9bb8;
+      --shadow: 0 10px 24px rgba(20, 35, 55, 0.08);
+      --src-bg: #f4f9ff;
+      --src-bd: #bfd6f3;
+      --expr-bg: #fff8ef;
+      --expr-bd: #efcea0;
+      --dst-bg: #eefaf2;
+      --dst-bd: #bfe2cb;
+      --overflow-bg: #eef3fa;
+      --overflow-bd: #c8d7e8;
+      --ui-blue: #2f76bd;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 20% 10%, #ebf2ff 0%, transparent 35%),
+        radial-gradient(circle at 80% 20%, #ecfff5 0%, transparent 30%),
+        var(--bg);
+    }
+
+    .page {
+      max-width: 1700px;
+      margin: 16px auto;
+      padding: 0 16px 16px;
+    }
+
+    .head {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 16px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .title { font-size: 22px; font-weight: 700; }
+
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .chip {
+      border: 1px solid #cde0f4;
+      background: #f4f9ff;
+      color: #31506d;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .toggle-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #2e4f6e;
+      border: 1px solid #cde0f4;
+      background: #f7fbff;
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+
+    .toggle-wrap input {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--ui-blue);
+      cursor: pointer;
+    }
+
+    .canvas {
+      position: relative;
+      min-height: 940px;
+      background: #f8fbff;
+      border: 1px dashed #d3e0ee;
+      border-radius: 16px;
+      overflow: auto;
+      box-shadow: var(--shadow);
+    }
+
+    .inner {
+      position: relative;
+      width: 1660px;
+      min-height: 940px;
+      padding: 0 0 20px;
+    }
+
+    .lane {
+      position: absolute;
+      top: 10px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid #d2dfed;
+      background: #f5f9ff;
+      color: #53708c;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      z-index: 3;
+    }
+    .lane.l1 { left: 58px; }
+    .lane.l2 { left: 700px; }
+    .lane.l3 { left: 1320px; }
+
+    .col {
+      position: absolute;
+      top: 48px;
+      z-index: 2;
+    }
+    .col.left { left: 22px; width: 540px; }
+    .col.mid { left: 624px; width: 430px; }
+    .col.right { left: 1124px; width: 520px; }
+
+    .stack { display: grid; gap: 14px; }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 6px 14px rgba(15, 35, 60, 0.05);
+      overflow: hidden;
+      transition: box-shadow .15s ease, border-color .15s ease, opacity .15s ease;
+    }
+
+    .card.active {
+      border-color: #8bb4dd;
+      box-shadow: 0 10px 20px rgba(47, 118, 189, 0.18);
+    }
+
+    .card.dim { opacity: .4; }
+
+    .card .hd {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .name { font-size: 16px; font-weight: 700; line-height: 1.2; word-break: break-all; }
+    .act { font-size: 12px; color: #5e7d97; font-weight: 600; }
+
+    .body {
+      display: flex;
+      flex-direction: column;
+      height: 300px;
+      min-height: 300px;
+      max-height: 300px;
+      background: #fff;
+    }
+
+    .rows {
+      overflow: auto;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .row {
+      padding: 9px 12px;
+      border-bottom: 1px solid #edf2f7;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 14px;
+      color: #26374a;
+      white-space: nowrap;
+      transition: opacity .12s ease, background .12s ease;
+      cursor: pointer;
+      user-select: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .row:last-child { border-bottom: 0; }
+
+    .row.src { background: linear-gradient(90deg, var(--src-bg), #fff); }
+    .row.expr { background: linear-gradient(90deg, var(--expr-bg), #fff); }
+    .row.dst { background: linear-gradient(90deg, var(--dst-bg), #fff); }
+
+    .row.active {
+      outline: 2px solid #8cb5dd;
+      outline-offset: -2px;
+      background: #e9f3ff;
+      position: relative;
+      z-index: 1;
+    }
+
+    .row.dim { opacity: .3; }
+
+    .overflow-anchor {
+      flex: none;
+      padding: 8px 12px;
+      border-top: 1px dashed var(--overflow-bd);
+      background: var(--overflow-bg);
+      color: #476786;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .pill {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 11px;
+      border-radius: 999px;
+      padding: 1px 8px;
+      vertical-align: 1px;
+      border: 1px solid;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .p-src { border-color: var(--src-bd); background: var(--src-bg); color: #2e5d8b; }
+    .p-expr { border-color: var(--expr-bd); background: var(--expr-bg); color: #885f27; }
+    .p-dst { border-color: var(--dst-bd); background: var(--dst-bg); color: #245f42; }
+
+    #edges {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .foot {
+      margin-top: 10px;
+      color: #5f7891;
+      font-size: 12px;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      vertical-align: -1px;
+    }
+    .d1 { background: var(--edge); }
+    .d2 { background: var(--edge-hi); }
+    .d3 { background: var(--edge-dash); }
+
+    .expr-tooltip {
+      position: fixed;
+      z-index: 50;
+      min-width: 320px;
+      max-width: 560px;
+      background: #2f3339;
+      color: #f5f7fb;
+      border-radius: 6px;
+      box-shadow: 0 12px 24px rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 8px 10px;
+      display: none;
+    }
+
+    .expr-tooltip::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: -8px;
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 8px solid #2f3339;
+    }
+
+    .expr-tooltip .tt-hd {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #cfd7e2;
+    }
+
+    .expr-tooltip .tt-body {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      max-height: 160px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #f2f6fc;
+    }
+
+    .expr-tooltip .copy-btn {
+      border: 1px solid #6f8fb0;
+      background: #3f4f61;
+      color: #e7eef8;
+      border-radius: 4px;
+      font-size: 11px;
+      padding: 2px 8px;
+      cursor: pointer;
+    }
+
+    .expr-tooltip .copy-btn:hover {
+      background: #4a6078;
+    }
+
+    .expr-tooltip .copy-tip {
+      margin-left: 8px;
+      font-size: 11px;
+      color: #8ce4a0;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="head">
+      <div class="title">字段级血缘图 · DataHub 卡片式原型 V5</div>
+      <div class="chips">
+        <span class="chip">单击字段：选择高亮</span>
+        <span class="chip">中列显示 SELECT 原始表达式（AS 前）</span>
+        <span class="chip">右列显示目标映射字段（AS 后）</span>
+        <label class="toggle-wrap"><input id="toggle-lineage" type="checkbox" checked />查看上下游关系</label>
+      </div>
+    </div>
+
+    <div class="canvas" id="canvas">
+      <div class="inner" id="inner">
+        <svg id="edges" viewBox="0 0 1660 940" preserveAspectRatio="none">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 z" fill="var(--edge)"></path>
+            </marker>
+            <marker id="arrowHi" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 z" fill="var(--edge-hi)"></path>
+            </marker>
+          </defs>
+        </svg>
+
+        <div class="lane l1">来源字段（按来源表分组）</div>
+        <div class="lane l2">SELECT 原始表达式（AS 前）</div>
+        <div class="lane l3">目标表字段（AS 后）</div>
+
+        <section class="col left">
+          <div class="stack">
+            <article class="card" id="card_main">
+              <div class="hd">
+                <div>
+                  <div class="meta">Source · Table</div>
+                  <div class="name">gf_core.dwd_crdt_trad_invg_gt_rcvb_ovdu_dspa_his_df</div>
+                </div>
+                <div class="act">Show ▾</div>
+              </div>
+              <div class="body">
+                <div class="rows" id="rows_main">
+                  <div class="row src" id="src_mana_org" data-node-id="src_mana_org">mana_org</div>
+                  <div class="row src" id="src_crnt_date" data-node-id="src_crnt_date">crnt_date</div>
+                  <div class="row src" id="src_ovdu_rcy1" data-node-id="src_ovdu_rcy1">ovdu_rcy1</div>
+                  <div class="row src" id="src_ovdu_days" data-node-id="src_ovdu_days">ovdu_days</div>
+                  <div class="row src" id="src_dspl_busi_org" data-node-id="src_dspl_busi_org">dspl_busi_org</div>
+                  <div class="row src" id="src_sprr_dspl_busi_org_name" data-node-id="src_sprr_dspl_busi_org_name">sprr_dspl_busi_org_name</div>
+                  <div class="row src" id="src_icho_lder_stff_name" data-node-id="src_icho_lder_stff_name">icho_lder_stff_name</div>
+                </div>
+                <div class="overflow-anchor" id="anchor_main">其他字段 (+4)</div>
+              </div>
+            </article>
+
+            <article class="card" id="card_sys">
+              <div class="hd">
+                <div>
+                  <div class="meta">System · Virtual</div>
+                  <div class="name">SYS_FUNC</div>
+                </div>
+                <div class="act">Show ▾</div>
+              </div>
+              <div class="body">
+                <div class="rows" id="rows_sys">
+                  <div class="row src" id="src_uuid" data-node-id="src_uuid">uuid()<span class="pill p-src">FUNC</span></div>
+                  <div class="row src" id="src_current_timestamp" data-node-id="src_current_timestamp">current_timestamp()<span class="pill p-src">FUNC</span></div>
+                </div>
+                <div class="overflow-anchor" id="anchor_sys">其他字段 (+0)</div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="col mid">
+          <div class="stack">
+            <article class="card" id="card_expr">
+              <div class="hd">
+                <div>
+                  <div class="meta">Derived · Expressions</div>
+                  <div class="name">SELECT 计算过程（原始表达式）</div>
+                </div>
+                <div class="act">13 expr</div>
+              </div>
+              <div class="body">
+                <div class="rows" id="rows_expr">
+                  <div class="row expr" id="expr_uuid" data-node-id="expr_uuid" data-full-expr="uuid()">uuid()<span class="pill p-expr">AS icode</span></div>
+                  <div class="row expr" id="expr_mana_org" data-node-id="expr_mana_org" data-full-expr="mana_org">mana_org<span class="pill p-expr">AS mana_org</span></div>
+                  <div class="row expr" id="expr_crnt_date" data-node-id="expr_crnt_date" data-full-expr="crnt_date">crnt_date<span class="pill p-expr">AS crnt_date</span></div>
+                  <div class="row expr" id="expr_ovdu_rcy1" data-node-id="expr_ovdu_rcy1" data-full-expr="sum(ovdu_rcy1)">sum(ovdu_rcy1)<span class="pill p-expr">AS ovdu_rcy1</span></div>
+                  <div class="row expr" id="expr_ovdu_rcy1_30" data-node-id="expr_ovdu_rcy1_30" data-full-expr="sum(if(ovdu_days+0 > 30, ovdu_rcy1, 0))">sum(if(ovdu_days+0 > 30, ovdu_rcy1, 0))<span class="pill p-expr">AS ovdu_rcy1_30_days</span></div>
+                  <div class="row expr" id="expr_current_ts" data-node-id="expr_current_ts" data-full-expr="current_timestamp()">current_timestamp()<span class="pill p-expr">AS etl_time</span></div>
+                  <div class="row expr" id="expr_sprr_name" data-node-id="expr_sprr_name" data-full-expr="sprr_dspl_busi_org_name">sprr_dspl_busi_org_name<span class="pill p-expr">AS sprr_dspl_busi_org_name</span></div>
+                </div>
+                <div class="overflow-anchor" id="anchor_expr">其他表达式 (+6)</div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="col right">
+          <div class="stack">
+            <article class="card" id="card_dst">
+              <div class="hd">
+                <div>
+                  <div class="meta">Target · Table</div>
+                  <div class="name">ads_lift_crdttradinvg_gt_rcvbovdudspahis_df</div>
+                </div>
+                <div class="act">PARTITION pt</div>
+              </div>
+              <div class="body">
+                <div class="rows" id="rows_dst">
+                  <div class="row dst" id="dst_icode" data-node-id="dst_icode">icode<span class="pill p-dst">loaded</span></div>
+                  <div class="row dst" id="dst_mana_org" data-node-id="dst_mana_org">mana_org<span class="pill p-dst">loaded</span></div>
+                  <div class="row dst" id="dst_crnt_date" data-node-id="dst_crnt_date">crnt_date<span class="pill p-dst">loaded</span></div>
+                  <div class="row dst" id="dst_ovdu_rcy1" data-node-id="dst_ovdu_rcy1">ovdu_rcy1<span class="pill p-dst">loaded</span></div>
+                  <div class="row dst" id="dst_ovdu_rcy1_30_days" data-node-id="dst_ovdu_rcy1_30_days">ovdu_rcy1_30_days<span class="pill p-dst">loaded</span></div>
+                  <div class="row dst" id="dst_etl_time" data-node-id="dst_etl_time">etl_time<span class="pill p-dst">loaded</span></div>
+                  <div class="row dst" id="dst_sprr_name" data-node-id="dst_sprr_name">sprr_dspl_busi_org_name<span class="pill p-dst">loaded</span></div>
+                </div>
+                <div class="overflow-anchor" id="anchor_dst">其他字段 (+5)</div>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span><span class="dot d1"></span>普通连线</span>
+      <span><span class="dot d2"></span>选中路径高亮</span>
+      <span><span class="dot d3"></span>虚线 = 节点被折叠后回退到“其他字段(+N)”</span>
+      <span>单击字段选择；单击空白清除；表达式悬浮查看完整内容并复制</span>
+    </div>
+  </div>
+
+  <div id="expr-tooltip" class="expr-tooltip">
+    <div class="tt-hd">
+      <span>完整表达式</span>
+      <span>
+        <button id="copy-expr-btn" class="copy-btn">复制</button>
+        <span id="copy-expr-tip" class="copy-tip">已复制</span>
+      </span>
+    </div>
+    <div id="expr-tooltip-body" class="tt-body"></div>
+  </div>
+
+  <script>
+    (function () {
+      const svg = document.getElementById('edges');
+      const canvas = document.getElementById('canvas');
+      const toggleLineage = document.getElementById('toggle-lineage');
+      const tooltip = document.getElementById('expr-tooltip');
+      const tooltipBody = document.getElementById('expr-tooltip-body');
+      const copyBtn = document.getElementById('copy-expr-btn');
+      const copyTip = document.getElementById('copy-expr-tip');
+
+      const NS = 'http://www.w3.org/2000/svg';
+      const rows = Array.from(document.querySelectorAll('.row'));
+      const exprRows = Array.from(document.querySelectorAll('.row.expr'));
+      const cards = Array.from(document.querySelectorAll('.card'));
+
+      const edges = [
+        ['src_uuid', 'expr_uuid', false],
+        ['src_mana_org', 'expr_mana_org', false],
+        ['src_crnt_date', 'expr_crnt_date', false],
+        ['src_ovdu_rcy1', 'expr_ovdu_rcy1', false],
+        ['src_ovdu_days', 'expr_ovdu_rcy1_30', true],
+        ['src_ovdu_rcy1', 'expr_ovdu_rcy1_30', true],
+        ['src_current_timestamp', 'expr_current_ts', false],
+        ['src_sprr_dspl_busi_org_name', 'expr_sprr_name', false],
+
+        ['expr_uuid', 'dst_icode', false],
+        ['expr_mana_org', 'dst_mana_org', false],
+        ['expr_crnt_date', 'dst_crnt_date', false],
+        ['expr_ovdu_rcy1', 'dst_ovdu_rcy1', false],
+        ['expr_ovdu_rcy1_30', 'dst_ovdu_rcy1_30_days', true],
+        ['expr_current_ts', 'dst_etl_time', false],
+        ['expr_sprr_name', 'dst_sprr_name', false]
+      ];
+
+      const containerByNode = {
+        src_mana_org: 'rows_main', src_crnt_date: 'rows_main', src_ovdu_rcy1: 'rows_main', src_ovdu_days: 'rows_main',
+        src_dspl_busi_org: 'rows_main', src_sprr_dspl_busi_org_name: 'rows_main', src_icho_lder_stff_name: 'rows_main',
+        src_uuid: 'rows_sys', src_current_timestamp: 'rows_sys',
+
+        expr_uuid: 'rows_expr', expr_mana_org: 'rows_expr', expr_crnt_date: 'rows_expr', expr_ovdu_rcy1: 'rows_expr',
+        expr_ovdu_rcy1_30: 'rows_expr', expr_current_ts: 'rows_expr', expr_sprr_name: 'rows_expr',
+
+        dst_icode: 'rows_dst', dst_mana_org: 'rows_dst', dst_crnt_date: 'rows_dst', dst_ovdu_rcy1: 'rows_dst',
+        dst_ovdu_rcy1_30_days: 'rows_dst', dst_etl_time: 'rows_dst', dst_sprr_name: 'rows_dst'
+      };
+
+      const anchorByContainer = {
+        rows_main: 'anchor_main',
+        rows_sys: 'anchor_sys',
+        rows_expr: 'anchor_expr',
+        rows_dst: 'anchor_dst'
+      };
+
+      const graphNext = {};
+      const graphPrev = {};
+      edges.forEach(([from, to]) => {
+        if (!graphNext[from]) graphNext[from] = [];
+        if (!graphPrev[to]) graphPrev[to] = [];
+        graphNext[from].push(to);
+        graphPrev[to].push(from);
+      });
+
+      let selectedNode = null;
+      let highlightedSet = new Set();
+      let pathEdgeSet = new Set();
+      let lineMeta = [];
+
+      let hoverTimer = null;
+      let hideTimer = null;
+      let tooltipText = '';
+      let tooltipPinned = false;
+
+      function isVisibleInContainer(el, container) {
+        const r = el.getBoundingClientRect();
+        const c = container.getBoundingClientRect();
+        return r.top >= c.top && r.bottom <= c.bottom;
+      }
+
+      function pointFrom(el, side) {
+        const cb = canvas.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        return {
+          x: side === 'right' ? r.right - cb.left + canvas.scrollLeft : r.left - cb.left + canvas.scrollLeft,
+          y: r.top - cb.top + r.height / 2 + canvas.scrollTop
+        };
+      }
+
+      function resolveEndpoint(nodeId, hiddenCounter) {
+        const node = document.getElementById(nodeId);
+        const containerId = containerByNode[nodeId];
+        const container = containerId ? document.getElementById(containerId) : null;
+        if (!node || !container) return { el: null, hidden: true };
+
+        if (isVisibleInContainer(node, container)) return { el: node, hidden: false };
+
+        hiddenCounter[containerId] = (hiddenCounter[containerId] || 0) + 1;
+        return { el: document.getElementById(anchorByContainer[containerId]), hidden: true };
+      }
+
+      function updateAnchorText(hiddenCounter) {
+        Object.keys(anchorByContainer).forEach((containerId) => {
+          const n = hiddenCounter[containerId] || 0;
+          const anchor = document.getElementById(anchorByContainer[containerId]);
+          if (anchor) anchor.textContent = n > 0 ? `其他字段 (+${n})` : '其他字段 (+0)';
+        });
+      }
+
+      function bfs(start, graph) {
+        const q = [start];
+        const seen = new Set([start]);
+        while (q.length) {
+          const cur = q.shift();
+          (graph[cur] || []).forEach((n) => {
+            if (!seen.has(n)) {
+              seen.add(n);
+              q.push(n);
+            }
+          });
+        }
+        return seen;
+      }
+
+      function buildHighlight(nodeId) {
+        if (!nodeId) {
+          highlightedSet = new Set();
+          pathEdgeSet = new Set();
+          return;
+        }
+
+        if (!toggleLineage.checked) {
+          highlightedSet = new Set([nodeId]);
+          pathEdgeSet = new Set();
+          return;
+        }
+
+        const up = bfs(nodeId, graphPrev);
+        const down = bfs(nodeId, graphNext);
+        highlightedSet = new Set([...up, ...down]);
+
+        pathEdgeSet = new Set();
+        edges.forEach(([from, to]) => {
+          if (highlightedSet.has(from) && highlightedSet.has(to)) {
+            pathEdgeSet.add(`${from}->${to}`);
+          }
+        });
+      }
+
+      function applyNodeStyles() {
+        const active = !!selectedNode;
+        const showLineage = toggleLineage.checked;
+
+        rows.forEach((row) => {
+          const id = row.dataset.nodeId;
+          row.classList.remove('active', 'dim');
+          if (!active) return;
+
+          if (showLineage) {
+            if (highlightedSet.has(id)) row.classList.add('active');
+            else row.classList.add('dim');
+          } else {
+            if (id === selectedNode) row.classList.add('active');
+          }
+        });
+
+        cards.forEach((card) => {
+          card.classList.remove('active', 'dim');
+          if (!active) return;
+
+          let has = false;
+          card.querySelectorAll('.row[data-node-id]').forEach((r) => {
+            const id = r.dataset.nodeId;
+            if (showLineage) {
+              if (highlightedSet.has(id)) has = true;
+            } else {
+              if (id === selectedNode) has = true;
+            }
+          });
+
+          if (has) card.classList.add('active');
+          else if (showLineage) card.classList.add('dim');
+        });
+      }
+
+      function applyEdgeStyles() {
+        const active = !!selectedNode;
+        const showLineage = toggleLineage.checked;
+
+        lineMeta.forEach((it) => {
+          const key = `${it.from}->${it.to}`;
+          const hi = pathEdgeSet.has(key);
+
+          if (!active) {
+            it.path.setAttribute('opacity', it.collapsed ? '0.72' : '0.95');
+            it.path.setAttribute('stroke', it.collapsed ? 'var(--edge-dash)' : 'var(--edge)');
+            it.path.setAttribute('stroke-width', it.baseWidth);
+            it.path.setAttribute('marker-end', 'url(#arrow)');
+            return;
+          }
+
+          if (!showLineage) {
+            it.path.setAttribute('opacity', it.collapsed ? '0.72' : '0.95');
+            it.path.setAttribute('stroke', it.collapsed ? 'var(--edge-dash)' : 'var(--edge)');
+            it.path.setAttribute('stroke-width', it.baseWidth);
+            it.path.setAttribute('marker-end', 'url(#arrow)');
+            return;
+          }
+
+          it.path.setAttribute('opacity', hi ? '1' : '0.12');
+          it.path.setAttribute('stroke', hi ? 'var(--edge-hi)' : it.collapsed ? 'var(--edge-dash)' : 'var(--edge)');
+          it.path.setAttribute('stroke-width', hi ? '2.5' : it.baseWidth);
+          it.path.setAttribute('marker-end', hi ? 'url(#arrowHi)' : 'url(#arrow)');
+        });
+      }
+
+      function draw() {
+        const defs = svg.querySelector('defs');
+        svg.innerHTML = '';
+        svg.appendChild(defs);
+
+        const hiddenCounter = {};
+        lineMeta = [];
+
+        edges.forEach(([fromId, toId, important]) => {
+          const from = resolveEndpoint(fromId, hiddenCounter);
+          const to = resolveEndpoint(toId, hiddenCounter);
+          if (!from.el || !to.el) return;
+
+          const p1 = pointFrom(from.el, 'right');
+          const p2 = pointFrom(to.el, 'left');
+          const dx = Math.max(40, (p2.x - p1.x) * 0.42);
+          const d = `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`;
+
+          const collapsed = from.hidden || to.hidden;
+          const path = document.createElementNS(NS, 'path');
+          path.setAttribute('d', d);
+          path.setAttribute('fill', 'none');
+          path.setAttribute('stroke', collapsed ? 'var(--edge-dash)' : 'var(--edge)');
+          path.setAttribute('stroke-width', important ? '1.95' : '1.45');
+          path.setAttribute('marker-end', 'url(#arrow)');
+          path.setAttribute('opacity', collapsed ? '0.72' : '0.95');
+          if (collapsed) path.setAttribute('stroke-dasharray', '6 4');
+          svg.appendChild(path);
+
+          lineMeta.push({
+            from: fromId,
+            to: toId,
+            path,
+            collapsed,
+            baseWidth: important ? '1.95' : '1.45'
+          });
+        });
+
+        updateAnchorText(hiddenCounter);
+        applyNodeStyles();
+        applyEdgeStyles();
+      }
+
+      function selectNode(nodeId) {
+        selectedNode = nodeId;
+        buildHighlight(nodeId);
+        applyNodeStyles();
+        applyEdgeStyles();
+      }
+
+      function clearSelection() {
+        selectedNode = null;
+        buildHighlight(null);
+        applyNodeStyles();
+        applyEdgeStyles();
+      }
+
+      function hideTooltip(force) {
+        clearTimeout(hoverTimer);
+        if (force) {
+          tooltip.style.display = 'none';
+          tooltipPinned = false;
+          return;
+        }
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          if (!tooltipPinned) {
+            tooltip.style.display = 'none';
+          }
+        }, 140);
+      }
+
+      function showTooltipForRow(row) {
+        const fullExpr = row.dataset.fullExpr || row.textContent.trim();
+        tooltipText = fullExpr;
+        tooltipBody.textContent = fullExpr;
+        copyTip.style.display = 'none';
+
+        const rect = row.getBoundingClientRect();
+        const top = rect.top - 14;
+        const left = rect.left + Math.min(220, rect.width / 2);
+
+        tooltip.style.display = 'block';
+        const ttRect = tooltip.getBoundingClientRect();
+
+        let finalLeft = left - ttRect.width / 2;
+        if (finalLeft < 12) finalLeft = 12;
+        if (finalLeft + ttRect.width > window.innerWidth - 12) {
+          finalLeft = window.innerWidth - ttRect.width - 12;
+        }
+
+        let finalTop = top - ttRect.height;
+        if (finalTop < 12) finalTop = rect.bottom + 10;
+
+        tooltip.style.left = `${finalLeft}px`;
+        tooltip.style.top = `${finalTop}px`;
+      }
+
+      async function copyTooltipText() {
+        if (!tooltipText) return;
+        try {
+          await navigator.clipboard.writeText(tooltipText);
+          copyTip.style.display = 'inline';
+          setTimeout(() => { copyTip.style.display = 'none'; }, 1200);
+        } catch (e) {
+          copyTip.textContent = '复制失败';
+          copyTip.style.display = 'inline';
+          setTimeout(() => {
+            copyTip.textContent = '已复制';
+            copyTip.style.display = 'none';
+          }, 1200);
+        }
+      }
+
+      function bindTooltip() {
+        exprRows.forEach((row) => {
+          row.addEventListener('mouseenter', () => {
+            clearTimeout(hideTimer);
+            hoverTimer = setTimeout(() => {
+              showTooltipForRow(row);
+            }, 420);
+          });
+
+          row.addEventListener('mouseleave', () => {
+            hideTooltip(false);
+          });
+        });
+
+        tooltip.addEventListener('mouseenter', () => {
+          tooltipPinned = true;
+          clearTimeout(hideTimer);
+        });
+
+        tooltip.addEventListener('mouseleave', () => {
+          tooltipPinned = false;
+          hideTooltip(false);
+        });
+
+        copyBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          copyTooltipText();
+        });
+
+        window.addEventListener('scroll', () => hideTooltip(true), true);
+        window.addEventListener('resize', () => hideTooltip(true));
+      }
+
+      function bind() {
+        rows.forEach((row) => {
+          row.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = row.dataset.nodeId;
+            if (selectedNode === id) clearSelection();
+            else selectNode(id);
+          });
+        });
+
+        document.getElementById('inner').addEventListener('click', (e) => {
+          if (!e.target.closest('.row')) clearSelection();
+        });
+
+        toggleLineage.addEventListener('change', () => {
+          if (selectedNode) buildHighlight(selectedNode);
+          applyNodeStyles();
+          applyEdgeStyles();
+        });
+
+        ['rows_main', 'rows_sys', 'rows_expr', 'rows_dst'].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.addEventListener('scroll', () => requestAnimationFrame(draw), { passive: true });
+        });
+
+        canvas.addEventListener('scroll', () => requestAnimationFrame(draw), { passive: true });
+        window.addEventListener('resize', () => requestAnimationFrame(draw));
+      }
+
+      bind();
+      bindTooltip();
+
+      window.addEventListener('load', () => {
+        draw();
+        selectNode('expr_ovdu_rcy1_30');
+      });
+      setTimeout(draw, 90);
+    })();
+  </script>
+</body>
+</html>
