@@ -1,0 +1,22 @@
+{
+  "requiredTokens": [
+    "查看上下游关系",
+    "血缘图全屏",
+    "全部展开",
+    "全部折叠",
+    "SELECT 原始表达式",
+    "来源表",
+    "中间表",
+    "目标表",
+    "其他字段",
+    "function layoutGraph()",
+    "latestModel.layoutParents",
+    "parentCenters.length",
+    "desiredTop"
+  ],
+  "requiredRegex": [
+    "centerByCard\\[parentId\\]",
+    "Math\\.max\\(cursor, item\\.desiredTop\\)",
+    "items\\.sort\\(function \\(a, b\\)"
+  ]
+}

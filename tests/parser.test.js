@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { analyzeSqlLineage, parseSqlFields, splitSelectItems } = require("../parser");
+const uiComplexLayoutSnapshot = require("./ui-complex-layout.snapshot.json");
 
 test("basic AS alias lineage", () => {
   const sql = "SELECT gicode AS COL_ID FROM goods";
@@ -316,6 +317,32 @@ test("ui style snapshot has horizontal-tree structure classes", () => {
   assert.equal(css.includes(".graph-node.target"), true);
   assert.equal(css.includes(".graph-node.result"), true);
   assert.equal(css.includes(".graph-edge"), true);
+});
+
+test("ui regression snapshot gate for complex sql layout", () => {
+  const js = fs.readFileSync("./app.js", "utf8");
+  uiComplexLayoutSnapshot.requiredTokens.forEach((token) => {
+    assert.equal(js.includes(token), true, "missing ui token: " + token);
+  });
+  uiComplexLayoutSnapshot.requiredRegex.forEach((pattern) => {
+    assert.equal(new RegExp(pattern).test(js), true, "missing ui regex: " + pattern);
+  });
+
+  const sql = `
+WITH c1 AS (
+  SELECT a.id, sum(a.qty) AS qty_sum FROM base_a a GROUP BY a.id
+),
+c2 AS (
+  SELECT c1.id, c1.qty_sum AS qty FROM c1
+)
+SELECT c2.qty AS out_qty
+FROM c2
+`;
+  const result = analyzeSqlLineage(sql, {});
+  const targets = new Set(result.graphEdges.map((e) => e.targetTable));
+  assert.equal(targets.has("c1"), true);
+  assert.equal(targets.has("c2"), true);
+  assert.equal(targets.has("RESULT_1"), true);
 });
 
 test("insert overwrite target table and 13 projection columns", () => {
